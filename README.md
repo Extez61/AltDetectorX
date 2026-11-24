@@ -17,9 +17,10 @@ hassas veri çalıyor mu? Çalıştırmak güvenli mi? Sade bir dille açıkla.
 CMD'ye ya da PowerShell'e yapıştırıp çalıştırın (ikisinde de çalışır). Komut, script'i geçici klasöre (`%TEMP%`) indirip `AltDetectorX.bat` ile çalıştırır:
 
 ```bat
-powershell -NoProfile -ExecutionPolicy Bypass -Command "cd ([IO.Path]::GetTempPath()); Remove-Item AltDetectorX.ps1,AltDetectorX.bat -ErrorAction Ignore; curl.exe -fsSL --connect-timeout 10 --max-time 60 --retry 3 -o ([IO.Path]::GetTempPath()+'AltDetectorX.ps1') https://raw.githubusercontent.com/Extez61/AltDetectorX/main/AltDetectorX.ps1; curl.exe -fsSL --connect-timeout 10 --max-time 60 --retry 3 -o ([IO.Path]::GetTempPath()+'AltDetectorX.bat') https://raw.githubusercontent.com/Extez61/AltDetectorX/main/AltDetectorX.bat; if (Test-Path AltDetectorX.bat) { start .\AltDetectorX.bat } else { Write-Host 'Indirme basarisiz, komutu tekrar calistirin.' -ForegroundColor Red; pause }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "cd ([IO.Path]::GetTempPath()); Remove-Item AltDetectorX.ps1,AltDetectorX.bat -ErrorAction Ignore; sv s (curl.exe -fsS --max-time 15 -H 'Accept: application/vnd.github.sha' https://api.github.com/repos/Extez61/AltDetectorX/commits/main); if (-not (gv s -ValueOnly)) { sv s main }; curl.exe -fsSL --connect-timeout 10 --max-time 60 --retry 3 -o ([IO.Path]::GetTempPath()+'AltDetectorX.ps1') ('https://raw.githubusercontent.com/Extez61/AltDetectorX/'+(gv s -ValueOnly)+'/AltDetectorX.ps1'); curl.exe -fsSL --connect-timeout 10 --max-time 60 --retry 3 -o ([IO.Path]::GetTempPath()+'AltDetectorX.bat') ('https://raw.githubusercontent.com/Extez61/AltDetectorX/'+(gv s -ValueOnly)+'/AltDetectorX.bat'); if (Test-Path AltDetectorX.bat) { start .\AltDetectorX.bat } else { Write-Host 'Indirme basarisiz, komutu tekrar calistirin.' -ForegroundColor Red; pause }"
 ```
 
+- Her zaman en güncel sürüm iner: komut önce GitHub'dan son commit'i sorar ve dosyaları o commit'ten indirir, böylece GitHub'ın 5 dakikalık önbelleğine takılmaz. (GitHub'a ulaşılamazsa normal adresten indirir.)
 - Bağlantı yavaşsa ya da takılırsa her dosya için en fazla 60 saniye beklenir ve 3 kez yeniden denenir; komut asla sonsuza kadar donmaz.
 - İndirme başarısız olursa kırmızı bir uyarı gösterilir; komutu tekrar çalıştırmanız yeterli.
 - Windows 10 (1803 ve sonrası) ile Windows 11'de yerleşik gelen `curl.exe` kullanılır.
