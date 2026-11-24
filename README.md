@@ -2,30 +2,21 @@
 
 Windows'ta kullanılmış Minecraft hesaplarını (altları) ve iz silme belirtilerini bulan PowerShell aracı. SS (ekran paylaşımlı kontrol) sırasında kullanılmak üzere yazıldı. Ağa bağlanmaz; dosyaları yalnızca okur, hiçbir şeyi değiştirmez.
 
-## Hızlı başlatma (tek satır)
+## Kurulum ve çalıştırma
 
-İndirmeden, doğrudan CMD'ye (ya da Win+R penceresine) yapıştırıp çalıştırın:
-
-```bat
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Extez61/AltDetectorX/main/AltDetectorX.ps1 -TimeoutSec 30 | iex"
-```
-
-Script en son sürümü GitHub'dan indirip bellekte çalıştırır, kalıcı dosya bırakmaz. Yönetici izni ister, sonra menüyü açar; tarama türü ve seçenekler menüden seçilir.
-
-- GitHub'a bağlantı takılırsa komut 30 saniye sonra hata verip kapanır (sonsuza kadar donmaz). Bu durumda komutu tekrar çalıştırın.
-- Parametreyle (`-Mode`, `-Export` vb.) çalıştırmak için `AltDetectorX.ps1`'i indirip aşağıdaki gibi çalıştırın.
-
-> Bu komut yalnızca repo herkese açıkken (public) çalışır.
-
-## Çalıştırma
-
-`AltDetectorX.bat` dosyasına çift tıklayın. Script yönetici izni ister, sonra menüyü açar.
+1. Yeşil **Code** düğmesi › **Download ZIP** ile repoyu indirin (ya da `AltDetectorX.ps1` ve `AltDetectorX.bat` dosyalarını alın).
+2. ZIP'i bir klasöre çıkarın.
+3. `AltDetectorX.bat` dosyasına çift tıklayın. Script yönetici izni ister, sonra menüyü açar; tarama türü ve seçenekler menüden seçilir.
 
 Elle çalıştırmak için:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\AltDetectorX.ps1
 ```
+
+### Tek satırlık komut (indir-ve-çalıştır) hakkında
+
+Script'i indirip doğrudan bellekte çalıştıran tek satırlık komutlar (`irm ... | iex` gibi) **Windows Defender tarafından engellenir** — bu kalıp, kaynağı ne olursa olsun kötü amaçlı yazılımlarda sık kullanıldığı için davranışsal olarak (`Trojan:Win32/Commando.B!ml`) işaretlenir. Bu, script'in içeriğiyle ilgili bir uyarı değildir; dosyanın kendisi Defender taramasından temiz geçer. Bu yüzden önerilen yöntem, yukarıdaki gibi dosyayı indirip çalıştırmaktır.
 
 ### Parametreler
 
