@@ -477,8 +477,11 @@ $script:InterestingExt = Microsoft.PowerShell.Utility\New-Object 'System.Collect
 foreach ($e in '.log', '.gz', '.json', '.jar', '.txt', '.xml', '.cfg', '.do_not_send_to_anyone', '.vhdx', '.vhd', '.vdi', '.vmdk', '.qcow2') { [void]$script:InterestingExt.Add($e) }
 
 $script:SwitcherModRx = '(?i)(^ias[-_. ]|in-?game-?account-?switcher|account-?switcher|accountswitcher|reauth|alt-?manager|altmanager|account-?manager)'
+# Aracın kendi dosyaları (rapor, geçici başlatıcı): kendi çıktısını "silinmiş Minecraft dosyası" sanmasın.
+$script:SelfFileRx = '(?i)(^|[\\/])AltDetectorX[^\\/]*\.(txt|log|ps1)$'
 
 function Register-File([IO.FileInfo]$Fi) {
+    if ($Fi.Name -match '(?i)^AltDetectorX[^\\/]*\.(txt|log|ps1)$') { return }
     if (-not $script:SeenFiles.Add($Fi.FullName)) { return }
     if (([int]$Fi.Attributes -band 0x441000) -ne 0) { return }
     $lower = $Fi.Name.ToLowerInvariant()
@@ -694,7 +697,7 @@ function Read-RecycleInfo([string]$IPath) {
 }
 
 function Invoke-RecycleScan {
-    $interesting = '(?i)(\.minecraft|lunarclient|feather|badlion|blclient|labymod|prismlauncher|polymc|multimc|atlauncher|gdlauncher|curseforge\\minecraft|modrinth|tlauncher|sklauncher|_IAS_ACCOUNTS|\\logs(\\|$)|\.log(\.gz)?$|launcher_accounts|launcher_profiles|accounts\.json|alt-?detector|ias\.json)'
+    $interesting = '(?i)(\.minecraft|lunarclient|feather|badlion|blclient|labymod|prismlauncher|polymc|multimc|atlauncher|gdlauncher|curseforge\\minecraft|modrinth|tlauncher|sklauncher|_IAS_ACCOUNTS|\\logs(\\|$)|\.log(\.gz)?$|launcher_accounts|launcher_profiles|accounts\.json|ias\.json)'
     $count = 0
     foreach ($drv in Get-ScanDrives) {
         $bin = Microsoft.PowerShell.Management\Join-Path $drv.RootDirectory.FullName '$Recycle.Bin'
@@ -709,6 +712,7 @@ function Invoke-RecycleScan {
                 if (-not $info) { continue }
                 $orig = [string]$info[0]; $when = [datetime]$info[1]
                 if ($orig -notmatch $interesting) { continue }
+                if ($orig -match $script:SelfFileRx) { continue }
                 $count++
                 $rPath = Microsoft.PowerShell.Management\Join-Path $sid ('$R' + [IO.Path]::GetFileName($i).Substring(2))
                 $lvl = 'Orta'
