@@ -49,6 +49,16 @@ $script:zq3 = 36, 63, 34, 46
 $script:OrigEncoding = $null
 try { $script:OrigEncoding = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
+# Konsolu koyu temaya sabitle: arka plan siyah, normal yazı açık gri (beyaza yakın).
+# Vurgu renkleri (başlık mavi/camgöbeği, uyarılar kırmızı/sarı, güvenli yeşil) olduğu gibi kalır.
+$script:OrigBg = $null; $script:OrigFg = $null
+try { $script:OrigBg = [Console]::BackgroundColor; $script:OrigFg = [Console]::ForegroundColor } catch { }
+function Set-DarkBase {
+    try { [Console]::BackgroundColor = [ConsoleColor]::Black; [Console]::ForegroundColor = [ConsoleColor]::Gray } catch { }
+}
+Set-DarkBase
+try { [Console]::Clear() } catch { }
+
 $script:MarginX = 2
 $script:MarginText = ' ' * $script:MarginX
 $script:OutAtStart = $true
@@ -185,7 +195,7 @@ function Stop-Ui {
     $script:UiActive = $false
     Microsoft.PowerShell.Utility\Write-Progress -Id 1 -Activity 'Bitti' -Completed
     if (-not $script:Tui) { return }
-    try { [Console]::ResetColor(); [Console]::Clear(); [Console]::CursorVisible = $true } catch { }
+    try { Set-DarkBase; [Console]::Clear(); [Console]::CursorVisible = $true } catch { }
 }
 
 function Set-Phase([int]$No, [string]$Title) {
@@ -195,6 +205,7 @@ function Set-Phase([int]$No, [string]$Title) {
 
 function Write-At([int]$Row, [string]$Text, [ConsoleColor]$Color) {
     [Console]::SetCursorPosition($script:MarginX, $Row)
+    [Console]::BackgroundColor = [ConsoleColor]::Black
     [Console]::ForegroundColor = $Color
     [Console]::Write((Format-Fit $Text $script:UiInner))
 }
@@ -249,7 +260,7 @@ function Show-Frame([string]$Activity, [string]$Status, [int]$Percent) {
             Write-At ($row++) $t $c
         }
         if ($sigRow -gt $row) { Write-At $sigRow (Get-SigPadded $w) 'DarkGray' }
-        [Console]::ResetColor()
+        Set-DarkBase
     } catch { $script:Tui = $false }
 }
 
@@ -1894,19 +1905,19 @@ function Show-Menu {
                 $col = 0
                 foreach ($seg in $run) {
                     try {
-                        [Console]::ResetColor()
+                        [Console]::BackgroundColor = [ConsoleColor]::Black
                         [Console]::ForegroundColor = $seg.F
                         if ($seg.B) { [Console]::BackgroundColor = $seg.B }
                     } catch { }
                     Microsoft.PowerShell.Utility\Write-Host $seg.T -NoNewline
-                    try { [Console]::ResetColor() } catch { }
+                    try { [Console]::BackgroundColor = [ConsoleColor]::Black; [Console]::ForegroundColor = [ConsoleColor]::Gray } catch { }
                     $col += ([string]$seg.T).Length
                 }
                 if ($col -lt $fullW - 1) { Microsoft.PowerShell.Utility\Write-Host (' ' * ($fullW - 1 - $col)) -NoNewline }
                 $r++
             }
             for ($j = $rows.Count; $j -lt $prevRows; $j++) {
-                try { [Console]::SetCursorPosition(0, $top + $j); [Console]::ResetColor() } catch { }
+                try { [Console]::SetCursorPosition(0, $top + $j); [Console]::BackgroundColor = [ConsoleColor]::Black; [Console]::ForegroundColor = [ConsoleColor]::Gray } catch { }
                 Microsoft.PowerShell.Utility\Write-Host (' ' * ($fullW - 1)) -NoNewline
             }
             $prevRows = $rows.Count
@@ -2202,7 +2213,13 @@ try {
     }
 } finally {
     Microsoft.PowerShell.Utility\Write-Progress -Id 1 -Activity 'Bitti' -Completed
-    try { [Console]::ResetColor(); [Console]::CursorVisible = $true } catch { }
+    # Konsolun özgün renklerini geri ver (kullanıcının teması bozulmasın).
+    try {
+        if ($null -ne $script:OrigBg) { [Console]::BackgroundColor = $script:OrigBg }
+        if ($null -ne $script:OrigFg) { [Console]::ForegroundColor = $script:OrigFg }
+        if ($null -eq $script:OrigBg -and $null -eq $script:OrigFg) { [Console]::ResetColor() }
+        [Console]::CursorVisible = $true
+    } catch { }
     if ($script:OrigPriority) { try { [Diagnostics.Process]::GetCurrentProcess().PriorityClass = $script:OrigPriority } catch { } }
     if ($script:OrigEncoding) { try { [Console]::OutputEncoding = $script:OrigEncoding } catch { } }
     $ErrorActionPreference = $script:OrigEAP
