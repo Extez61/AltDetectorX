@@ -17,8 +17,12 @@ hassas veri çalıyor mu? Çalıştırmak güvenli mi? Sade bir dille açıkla.
 CMD'ye ya da PowerShell'e yapıştırıp çalıştırın (ikisinde de çalışır). Komut, script'i geçici klasöre (`%TEMP%`) indirip `AltDetectorX.bat` ile çalıştırır:
 
 ```bat
-powershell -NoProfile -ExecutionPolicy Bypass -Command "cd ([IO.Path]::GetTempPath()); iwr https://raw.githubusercontent.com/Extez61/AltDetectorX/main/AltDetectorX.ps1 -UseBasicParsing -OutFile AltDetectorX.ps1; iwr https://raw.githubusercontent.com/Extez61/AltDetectorX/main/AltDetectorX.bat -UseBasicParsing -OutFile AltDetectorX.bat; start .\AltDetectorX.bat"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "cd ([IO.Path]::GetTempPath()); Remove-Item AltDetectorX.ps1,AltDetectorX.bat -ErrorAction Ignore; curl.exe -fsSL --connect-timeout 10 --max-time 60 --retry 3 -o ([IO.Path]::GetTempPath()+'AltDetectorX.ps1') https://raw.githubusercontent.com/Extez61/AltDetectorX/main/AltDetectorX.ps1; curl.exe -fsSL --connect-timeout 10 --max-time 60 --retry 3 -o ([IO.Path]::GetTempPath()+'AltDetectorX.bat') https://raw.githubusercontent.com/Extez61/AltDetectorX/main/AltDetectorX.bat; if (Test-Path AltDetectorX.bat) { start .\AltDetectorX.bat } else { Write-Host 'Indirme basarisiz, komutu tekrar calistirin.' -ForegroundColor Red; pause }"
 ```
+
+- Bağlantı yavaşsa ya da takılırsa her dosya için en fazla 60 saniye beklenir ve 3 kez yeniden denenir; komut asla sonsuza kadar donmaz.
+- İndirme başarısız olursa kırmızı bir uyarı gösterilir; komutu tekrar çalıştırmanız yeterli.
+- Windows 10 (1803 ve sonrası) ile Windows 11'de yerleşik gelen `curl.exe` kullanılır.
 
 Dosyalar diske indiği için Windows Defender onları normal şekilde tarar; araç temiz olduğundan engellenmez. Script yönetici izni ister, sonra menüyü açar; tarama türü ve seçenekler menüden seçilir.
 
