@@ -170,14 +170,19 @@ function Add-Recent([string]$P) {
     while ($script:Recent.Count -gt 40) { [void]$script:Recent.Dequeue() }
 }
 
+$script:UiActive = $false
+$script:LastActivity = ''; $script:LastStatus = ''; $script:LastPercent = -1
+
 function Start-Ui {
     $script:ScanStart = [DateTime]::Now
+    $script:UiActive = $true
     if (-not $script:Tui) { return }
     try { [Console]::Clear(); [Console]::CursorVisible = $false } catch { }
     $script:UiWidth = 0
 }
 
 function Stop-Ui {
+    $script:UiActive = $false
     Microsoft.PowerShell.Utility\Write-Progress -Id 1 -Activity 'Bitti' -Completed
     if (-not $script:Tui) { return }
     try { [Console]::ResetColor(); [Console]::Clear(); [Console]::CursorVisible = $true } catch { }
@@ -250,6 +255,8 @@ function Show-Frame([string]$Activity, [string]$Status, [int]$Percent) {
 
 function Show-Progress {
     param([int]$Id = 1, [string]$Activity, [string]$Status, [int]$Percent = -1, [string]$Recent, [switch]$Force)
+    # Son durum saklanır; uzun süren dış komutlar beklenirken Update-UiTick ekranı bununla yeniden çizer.
+    $script:LastActivity = $Activity; $script:LastStatus = $Status; $script:LastPercent = $Percent
     $now = [Environment]::TickCount
     if (-not $Force -and [Math]::Abs($now - $script:LastTick) -lt 100) { return }
     $script:LastTick = $now
@@ -262,6 +269,14 @@ function Show-Progress {
     } else {
         Microsoft.PowerShell.Utility\Write-Progress -Id $Id -Activity $Activity -Status $st
     }
+}
+
+# Ekranı (süre, animasyonlu çubuk) son bilinen durumla yeniler. Uzun süren bekleme döngülerinden çağrılır;
+# Show-Progress kendi içinde 100 ms'de bir çizecek şekilde sınırlandığı için sık çağrılması sorun değildir.
+function Update-UiTick {
+    if (-not $script:UiActive) { return }
+    $a = $script:LastActivity; $s = $script:LastStatus; $p = $script:LastPercent
+    Show-Progress -Activity $a -Status $s -Percent $p
 }
 
 $C_T = [string][char]0x251C + [char]0x2500 + ' '
@@ -733,7 +748,8 @@ function Split-CsvLine([string]$Line) {
 
 function Invoke-ShadowScan {
     $shadows = @()
-    try { $shadows = @(CimCmdlets\Get-CimInstance Win32_ShadowCopy -ErrorAction Stop) } catch { return }
+    Show-Progress -Status 'Gölge kopyalar (geri yükleme noktaları) aranıyor...' -Force
+    try { $shadows = @(CimCmdlets\Get-CimInstance Win32_ShadowCopy -ErrorAction Stop -OperationTimeoutSec 60) } catch { return }
     if ($shadows.Count -eq 0) {
         Add-Alert 'Bilgi' 'Gölge kopya (geri yükleme noktası) yok' 'Eski dosya sürümlerine bakılamadı. Gölge kopyaların hepsinin silinmiş olması da bir temizlik işareti olabilir.'
         return
@@ -815,11 +831,13 @@ function Invoke-UsnScan {
             continue
         }
 
-        Show-Progress -Status "Silinmiş dosyalar aranıyor, biraz sürebilir..." -Force
+        Show-Progress -Status "USN günlüğü okunuyor ($letter), birkaç dakika sürebilir..." -Recent "$letter\ (USN günlüğü)" -Force
         $args2 = "/c `"`"$fsutil`" usn readjournal $letter csv | findstr /i /c:`".log.gz`" /c:`"latest.log`" /c:`"account`" /c:`"launcher_profiles`" /c:`"do_not_send`" /c:`"ias.json`"`""
         $out = Invoke-Native $env:ComSpec $args2 300000 $script:OemEnc
         if (-not $out) { continue }
+        Show-Progress -Status "USN kayıtları inceleniyor ($letter)..." -Force
         foreach ($line in ($out -split "`r?`n")) {
+            Update-UiTick
             if (-not $line) { continue }
             $f = Split-CsvLine $line
             if ($f.Count -lt 10) { continue }
@@ -854,7 +872,9 @@ function Invoke-UsnScan {
     }
 
     $count = 0
+    if ($found.Count -gt 0) { Show-Progress -Status "Silinen dosyaların konumları bulunuyor ($($found.Count) kayıt)..." -Force }
     foreach ($e in $found.Values) {
+        Update-UiTick
         $letter = $e[0]; $parent = $e[1]; $name = $e[2]; $ts = $e[3]; $what = $e[4]
         $dir = $null
         if ($parent -match '^0x[0-9a-fA-F]+$') {
@@ -1343,7 +1363,16 @@ function Invoke-Native {
         $proc = [Diagnostics.Process]::Start($psi)
         $task = $proc.StandardOutput.ReadToEndAsync()
         [void]$proc.StandardError.ReadToEndAsync()
-        if (-not $proc.WaitForExit($TimeoutMs)) {
+        # Tek seferde beklemek yerine 100 ms'lik adımlarla bekle ve arada ekranı yenile; yoksa uzun komutlarda
+        # (ör. USN günlüğü okuma, dakikalar sürebilir) arayüz donar ve süre sayacı durur.
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $exited = $false
+        while ($true) {
+            if ($proc.WaitForExit(100)) { $exited = $true; break }
+            if ($sw.ElapsedMilliseconds -ge $TimeoutMs) { break }
+            Update-UiTick
+        }
+        if (-not $exited) {
             # Süreç ağacının tamamını kapat: $Exe cmd.exe ise alt süreçler (fsutil, findstr) yoksa çalışmaya devam eder.
             try {
                 $tk = Microsoft.PowerShell.Management\Join-Path $env:SystemRoot 'System32\taskkill.exe'
