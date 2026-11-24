@@ -24,7 +24,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cd ([IO.Path]::GetTempPa
 - İndirme başarısız olursa kırmızı bir uyarı gösterilir; komutu tekrar çalıştırmanız yeterli.
 - Windows 10 (1803 ve sonrası) ile Windows 11'de yerleşik gelen `curl.exe` kullanılır.
 
-Dosyalar diske indiği için Windows Defender onları normal şekilde tarar; araç temiz olduğundan engellenmez. Script yönetici izni ister, sonra menüyü açar; tarama türü ve seçenekler menüden seçilir.
+Dosyalar diske indiği için Windows Defender onları normal şekilde tarar; araç temiz olduğundan engellenmez. Script yönetici izni ister, sonra menüyü açar; tarama türü ve seçenekler menüden seçilir. Menüdeki seçeneklerin hepsi (dosya yollarını göster, WSL dağıtımlarını tara, raporu masaüstüne kaydet) varsayılan olarak açık gelir; istemediğinizi Boşluk tuşuyla kapatabilirsiniz.
 
 > Not: `irm ... | iex` gibi script'i **diske yazmadan bellekte çalıştıran** komutlar Defender tarafından engellenir (`Trojan:Win32/Commando.B!ml`). Bu, indir-ve-bellekte-çalıştır kalıbına verilen davranışsal bir uyarıdır, script'in içeriğiyle ilgili değildir. Yukarıdaki komut dosyayı diske indirdiği için bu sorunu yaşamaz.
 

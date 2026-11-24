@@ -1853,7 +1853,8 @@ function Show-Menu {
         @{ Type = 'sep' },
         @{ Type = 'exit'; Label = 'Çıkış' }
     )
-    $opts = @{ Paths = [bool]$Paths; Wsl = -not [bool]$NoWsl; Export = [bool]$Export }
+    # Menüde tüm seçenekler varsayılan olarak açık gelir; kullanıcı Boşluk ile kapatabilir.
+    $opts = @{ Paths = $true; Wsl = $true; Export = $true }
     $sel = 1
     $panel = Get-PanelLines
     $arrow = [string][char]0x25BA
