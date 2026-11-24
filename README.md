@@ -2,21 +2,29 @@
 
 Windows'ta kullanılmış Minecraft hesaplarını (altları) ve iz silme belirtilerini bulan PowerShell aracı. SS (ekran paylaşımlı kontrol) sırasında kullanılmak üzere yazıldı. Ağa bağlanmaz; dosyaları yalnızca okur, hiçbir şeyi değiştirmez.
 
-## Kurulum ve çalıştırma
+## Hızlı başlatma (tek satır)
 
-1. Yeşil **Code** düğmesi › **Download ZIP** ile repoyu indirin (ya da `AltDetectorX.ps1` ve `AltDetectorX.bat` dosyalarını alın).
+CMD'ye (ya da Win+R penceresine) yapıştırıp çalıştırın. Komut, script'i geçici bir klasöre indirip `AltDetectorX.bat` ile çalıştırır:
+
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=Join-Path $env:TEMP 'AltDetectorX';[void](mkdir $d -Force);'AltDetectorX.ps1','AltDetectorX.bat'|%{Invoke-WebRequest ('https://raw.githubusercontent.com/Extez61/AltDetectorX/main/'+$_) -UseBasicParsing -OutFile (Join-Path $d $_)};Start-Process (Join-Path $d 'AltDetectorX.bat')"
+```
+
+Dosyalar diske indiği için Windows Defender onları normal şekilde tarar; araç temiz olduğundan engellenmez. Script yönetici izni ister, sonra menüyü açar; tarama türü ve seçenekler menüden seçilir.
+
+> Not: `irm ... | iex` gibi script'i **diske yazmadan bellekte çalıştıran** komutlar Defender tarafından engellenir (`Trojan:Win32/Commando.B!ml`). Bu, indir-ve-bellekte-çalıştır kalıbına verilen davranışsal bir uyarıdır, script'in içeriğiyle ilgili değildir. Yukarıdaki komut dosyayı diske indirdiği için bu sorunu yaşamaz.
+
+## Elle kurulum
+
+1. Yeşil **Code** düğmesi › **Download ZIP** ile repoyu indirin.
 2. ZIP'i bir klasöre çıkarın.
-3. `AltDetectorX.bat` dosyasına çift tıklayın. Script yönetici izni ister, sonra menüyü açar; tarama türü ve seçenekler menüden seçilir.
+3. `AltDetectorX.bat` dosyasına çift tıklayın.
 
 Elle çalıştırmak için:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\AltDetectorX.ps1
 ```
-
-### Tek satırlık komut (indir-ve-çalıştır) hakkında
-
-Script'i indirip doğrudan bellekte çalıştıran tek satırlık komutlar (`irm ... | iex` gibi) **Windows Defender tarafından engellenir** — bu kalıp, kaynağı ne olursa olsun kötü amaçlı yazılımlarda sık kullanıldığı için davranışsal olarak (`Trojan:Win32/Commando.B!ml`) işaretlenir. Bu, script'in içeriğiyle ilgili bir uyarı değildir; dosyanın kendisi Defender taramasından temiz geçer. Bu yüzden önerilen yöntem, yukarıdaki gibi dosyayı indirip çalıştırmaktır.
 
 ### Parametreler
 
