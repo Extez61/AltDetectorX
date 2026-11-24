@@ -2,6 +2,18 @@
 
 Windows'ta kullanılmış Minecraft hesaplarını (altları) ve iz silme belirtilerini bulan PowerShell aracı. SS (ekran paylaşımlı kontrol) sırasında kullanılmak üzere yazıldı. Ağa bağlanmaz; dosyaları yalnızca okur, hiçbir şeyi değiştirmez.
 
+## Hızlı başlatma (tek satır)
+
+İndirmeden, doğrudan CMD'ye (ya da Win+R penceresine) yapıştırıp çalıştırın:
+
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=3072; & ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/Extez61/AltDetectorX/main/AltDetectorX.ps1')))"
+```
+
+Script en son sürümü GitHub'dan indirip bellekte çalıştırır, kalıcı dosya bırakmaz. Yönetici izni ister, sonra menüyü açar. Parametre vermek için parametreyi `)))` ile son `"` işaretinin arasına yazın, örneğin `...AltDetectorX.ps1'))) -Mode Quick"`.
+
+> Bu komut yalnızca repo herkese açıkken (public) çalışır.
+
 ## Çalıştırma
 
 `AltDetectorX.bat` dosyasına çift tıklayın. Script yönetici izni ister, sonra menüyü açar.
