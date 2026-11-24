@@ -14,10 +14,10 @@ hassas veri çalıyor mu? Çalıştırmak güvenli mi? Sade bir dille açıkla.
 
 ## Hızlı başlatma (tek satır)
 
-CMD'ye (ya da Win+R penceresine) yapıştırıp çalıştırın. Komut, script'i geçici bir klasöre indirip `AltDetectorX.bat` ile çalıştırır:
+CMD'ye ya da PowerShell'e yapıştırıp çalıştırın (ikisinde de çalışır). Komut, script'i geçici klasöre (`%TEMP%`) indirip `AltDetectorX.bat` ile çalıştırır:
 
 ```bat
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=Join-Path $env:TEMP 'AltDetectorX';[void](mkdir $d -Force);'AltDetectorX.ps1','AltDetectorX.bat'|%{Invoke-WebRequest ('https://raw.githubusercontent.com/Extez61/AltDetectorX/main/'+$_) -UseBasicParsing -OutFile (Join-Path $d $_)};Start-Process (Join-Path $d 'AltDetectorX.bat')"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "cd ([IO.Path]::GetTempPath()); iwr https://raw.githubusercontent.com/Extez61/AltDetectorX/main/AltDetectorX.ps1 -UseBasicParsing -OutFile AltDetectorX.ps1; iwr https://raw.githubusercontent.com/Extez61/AltDetectorX/main/AltDetectorX.bat -UseBasicParsing -OutFile AltDetectorX.bat; start .\AltDetectorX.bat"
 ```
 
 Dosyalar diske indiği için Windows Defender onları normal şekilde tarar; araç temiz olduğundan engellenmez. Script yönetici izni ister, sonra menüyü açar; tarama türü ve seçenekler menüden seçilir.
