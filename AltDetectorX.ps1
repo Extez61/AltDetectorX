@@ -477,11 +477,26 @@ $script:InterestingExt = Microsoft.PowerShell.Utility\New-Object 'System.Collect
 foreach ($e in '.log', '.gz', '.json', '.jar', '.txt', '.xml', '.cfg', '.do_not_send_to_anyone', '.vhdx', '.vhd', '.vdi', '.vmdk', '.qcow2') { [void]$script:InterestingExt.Add($e) }
 
 $script:SwitcherModRx = '(?i)(^ias[-_. ]|in-?game-?account-?switcher|account-?switcher|accountswitcher|reauth|alt-?manager|altmanager|account-?manager)'
-# Aracın kendi dosyaları (rapor, geçici başlatıcı): kendi çıktısını "silinmiş Minecraft dosyası" sanmasın.
-$script:SelfFileRx = '(?i)(^|[\\/])AltDetectorX[^\\/]*\.(txt|log|ps1)$'
+# Aracın kendi rapor dosyası (-Export çıktısı) kendi çıktısını "silinmiş Minecraft dosyası" sanmasın.
+# ÖNEMLİ: yalnızca .txt rapor hariç tutulur. .log / .json / hesap dosyaları ASLA ada göre
+# atlanmaz; yoksa biri gerçek bir logu "AltDetectorX...log" diye yeniden adlandırıp taramadan
+# kaçabilirdi. Araç zaten yalnızca .txt rapor ve (anında silinen) geçici .ps1 başlatıcı üretir;
+# .txt dosyaları hiçbir yerde hesap/log olarak okunmadığı için bunu hariç tutmak açık yaratmaz.
+$script:SelfFileRx = '(?i)(^|[\\/])AltDetectorX[^\\/]*\.txt$'
+
+# Dosya gerçekten bu aracın ürettiği bir rapor mu? Sadece ad değil, İÇERİK doğrulanır:
+# rapor başlığı ve imza aranır. Böylece biri bir hesap dosyasını "AltDetectorX_x.txt" diye
+# adlandırıp taramadan gizleyemez (gizleme açığı kapalı).
+function Test-IsSelfReport([string]$Path) {
+    try {
+        if (-not [IO.File]::Exists($Path)) { return $false }
+        if ((Microsoft.PowerShell.Utility\New-Object IO.FileInfo($Path)).Length -gt 2MB) { return $false }
+        $txt = [IO.File]::ReadAllText($Path)
+    } catch { return $false }
+    return ($txt -match '(?m)^\s*#\s*AltDetectorX\b' -and $txt -match 'made by ~extez' -and $txt -match '(?m)^\s*#\s*HESAPLAR\b')
+}
 
 function Register-File([IO.FileInfo]$Fi) {
-    if ($Fi.Name -match '(?i)^AltDetectorX[^\\/]*\.(txt|log|ps1)$') { return }
     if (-not $script:SeenFiles.Add($Fi.FullName)) { return }
     if (([int]$Fi.Attributes -band 0x441000) -ne 0) { return }
     $lower = $Fi.Name.ToLowerInvariant()
@@ -712,9 +727,10 @@ function Invoke-RecycleScan {
                 if (-not $info) { continue }
                 $orig = [string]$info[0]; $when = [datetime]$info[1]
                 if ($orig -notmatch $interesting) { continue }
-                if ($orig -match $script:SelfFileRx) { continue }
-                $count++
                 $rPath = Microsoft.PowerShell.Management\Join-Path $sid ('$R' + [IO.Path]::GetFileName($i).Substring(2))
+                # Aracın kendi raporunu atla; ama yalnızca içeriği gerçekten rapor olan .txt'leri (açık kapalı).
+                if ($orig -match $script:SelfFileRx -and (Test-IsSelfReport $rPath)) { continue }
+                $count++
                 $lvl = 'Orta'
                 if ($orig -match '(?i)(\\logs(\\|$)|\.log(\.gz)?$|_IAS_ACCOUNTS|accounts|launcher_profiles|\.minecraft$|lunarclient$)') { $lvl = 'Yüksek' }
                 if ($count -le 40) {
