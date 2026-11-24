@@ -504,7 +504,7 @@ function Test-IsSelfReport([string]$Path) {
         if ((Microsoft.PowerShell.Utility\New-Object IO.FileInfo($Path)).Length -gt 2MB) { return $false }
         $txt = [IO.File]::ReadAllText($Path)
     } catch { return $false }
-    return ($txt -match '(?m)^\s*#\s*AltDetectorX\b' -and $txt -match 'made by ~extez' -and $txt -match '(?m)^\s*#\s*HESAPLAR\b')
+    return ($txt -match '(?m)^\s*#\s*AltDetectorX\b' -and $txt.Contains((Get-Sig)) -and $txt -match '(?m)^\s*#\s*HESAPLAR\b')
 }
 
 function Register-File([IO.FileInfo]$Fi) {
