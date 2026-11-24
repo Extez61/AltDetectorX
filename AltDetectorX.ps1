@@ -1826,36 +1826,82 @@ function Show-Menu {
     $sel = 1
     $panel = Get-PanelLines
     $arrow = [string][char]0x25BA
+    $script:MenuInit = $false
+    $prevRows = 0
     while ($true) {
         try { [Console]::CursorVisible = $false } catch { }
-        try { [Console]::Clear() } catch { }
         $m = $script:MarginText
-        Microsoft.PowerShell.Utility\Write-Host ''
         $pw = Get-OutWidth
+
+        # Çizilecek satırları renkli parçalar halinde hazırla (her satır = parça listesi).
+        $rows = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
+        $rows.Add(@())
         foreach ($l in $panel) {
-            if (-not $l[0]) { Microsoft.PowerShell.Utility\Write-Host ''; continue }
-            foreach ($ln in (Split-Wrap ([string]$l[0]) $pw (' ' * 17))) { Microsoft.PowerShell.Utility\Write-Host ($m + $ln) -ForegroundColor $l[1] }
+            if (-not $l[0]) { $rows.Add(@()); continue }
+            foreach ($ln in (Split-Wrap ([string]$l[0]) $pw (' ' * 17))) { $rows.Add(@(@{ T = $m + $ln; F = $l[1] })) }
         }
-        Microsoft.PowerShell.Utility\Write-Host ''
-        Microsoft.PowerShell.Utility\Write-Host ($m + '  ' + ([string][char]0x2500 * [Math]::Min(66, $pw - 4))) -ForegroundColor DarkCyan
+        $rows.Add(@())
+        $rows.Add(@(@{ T = $m + '  ' + ([string][char]0x2500 * [Math]::Min(66, $pw - 4)); F = 'DarkCyan' }))
         for ($i = 0; $i -lt $items.Count; $i++) {
             $it = $items[$i]
+            if ($it.Type -eq 'sep') { $rows.Add(@()); continue }
             $on = ($i -eq $sel)
-            if ($it.Type -eq 'sep') { Microsoft.PowerShell.Utility\Write-Host ''; continue }
             $prefix = '    '; if ($on) { $prefix = "  $arrow " }
             $text = $it.Label
             if ($it.Type -eq 'opt') { $box = '[ ]'; if ($opts[$it.Key]) { $box = '[x]' }; $text = "$box $($it.Label)" }
-            Microsoft.PowerShell.Utility\Write-Host ($m + $prefix) -ForegroundColor Cyan -NoNewline
-            if ($on) { Microsoft.PowerShell.Utility\Write-Host (" {0,-28}" -f $text) -ForegroundColor Black -BackgroundColor Cyan -NoNewline }
-            else { Microsoft.PowerShell.Utility\Write-Host (" {0,-28}" -f $text) -ForegroundColor White -NoNewline }
-            if ($it.Desc) { Microsoft.PowerShell.Utility\Write-Host "  $($it.Desc)" -ForegroundColor DarkGray } else { Microsoft.PowerShell.Utility\Write-Host '' }
+            $lbl = (" {0,-28}" -f $text)
+            if ($on) { $rows.Add(@(@{ T = $m + $prefix; F = 'Cyan' }, @{ T = $lbl; F = 'Black'; B = 'Cyan' })) }
+            else { $rows.Add(@(@{ T = $m + $prefix; F = 'Cyan' }, @{ T = $lbl; F = 'White' })) }
         }
-        Microsoft.PowerShell.Utility\Write-Host ''
+        $rows.Add(@())
         $hint = ("  {0}/{1} - SEÇ     ENTER - ONAYLA     BO{2}LUK - AÇ/KAPAT     1-2-3 - HIZLI SEÇİM     ESC - ÇIKI{2}" -f [char]0x2191, [char]0x2193, [char]0x015E)
-        foreach ($ln in (Split-Wrap $hint $pw '  ')) { Microsoft.PowerShell.Utility\Write-Host ($m + $ln) -ForegroundColor DarkGray }
-        Microsoft.PowerShell.Utility\Write-Host ''
-        Microsoft.PowerShell.Utility\Write-Host ($m + (Get-SigPadded $pw)) -ForegroundColor DarkGray
-        Microsoft.PowerShell.Utility\Write-Host ''
+        foreach ($ln in (Split-Wrap $hint $pw '  ')) { $rows.Add(@(@{ T = $m + $ln; F = 'DarkGray' })) }
+        $rows.Add(@())
+        $rows.Add(@(@{ T = $m + (Get-SigPadded $pw); F = 'DarkGray' }))
+
+        $useCur = $false
+        try { $useCur = -not [Console]::IsOutputRedirected } catch { $useCur = $false }
+
+        if ($useCur) {
+            # İmleci başa alıp yerinde çiz: [Console]::Clear() bazı terminallerde içeriği aşağı kaydırıp
+            # başlığı geride bıraktığı için her döngüde temizlemek yerine satırları üzerine yazıyoruz.
+            if (-not $script:MenuInit) { try { [Console]::Clear() } catch { }; $script:MenuInit = $true }
+            $fullW = 80; try { $fullW = [Console]::WindowWidth } catch { }
+            $top = 0; try { $top = [Console]::WindowTop } catch { }
+            $r = $top
+            foreach ($run in $rows) {
+                try { [Console]::SetCursorPosition(0, $r) } catch { }
+                $col = 0
+                foreach ($seg in $run) {
+                    try {
+                        [Console]::ResetColor()
+                        [Console]::ForegroundColor = $seg.F
+                        if ($seg.B) { [Console]::BackgroundColor = $seg.B }
+                    } catch { }
+                    Microsoft.PowerShell.Utility\Write-Host $seg.T -NoNewline
+                    try { [Console]::ResetColor() } catch { }
+                    $col += ([string]$seg.T).Length
+                }
+                if ($col -lt $fullW - 1) { Microsoft.PowerShell.Utility\Write-Host (' ' * ($fullW - 1 - $col)) -NoNewline }
+                $r++
+            }
+            for ($j = $rows.Count; $j -lt $prevRows; $j++) {
+                try { [Console]::SetCursorPosition(0, $top + $j); [Console]::ResetColor() } catch { }
+                Microsoft.PowerShell.Utility\Write-Host (' ' * ($fullW - 1)) -NoNewline
+            }
+            $prevRows = $rows.Count
+            try { [Console]::SetCursorPosition(0, $top) } catch { }
+        } else {
+            try { [Console]::Clear() } catch { }
+            foreach ($run in $rows) {
+                if ($run.Count -eq 0) { Microsoft.PowerShell.Utility\Write-Host ''; continue }
+                for ($s = 0; $s -lt $run.Count; $s++) {
+                    $seg = $run[$s]; $last = ($s -eq $run.Count - 1)
+                    if ($seg.B) { Microsoft.PowerShell.Utility\Write-Host $seg.T -ForegroundColor $seg.F -BackgroundColor $seg.B -NoNewline:(-not $last) }
+                    else { Microsoft.PowerShell.Utility\Write-Host $seg.T -ForegroundColor $seg.F -NoNewline:(-not $last) }
+                }
+            }
+        }
 
         $k = [Console]::ReadKey($true)
         $key = [string]$k.Key
