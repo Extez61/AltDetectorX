@@ -15,7 +15,8 @@ if ($script:EncProbe -cne ([string][char]0x011F + [char]0x00FC + [char]0x0130)) 
         while ($null -ne $encRoot.Parent) { $encRoot = $encRoot.Parent }
         $encText = [Text.Encoding]::UTF8.GetString([Text.Encoding]::Default.GetBytes($encRoot.Extent.Text))
         $env:ALTDETECTORX_ENCFIX = '1'
-        try { & ([scriptblock]::Create($encText)) @PSBoundParameters } finally { $env:ALTDETECTORX_ENCFIX = $null }
+        $env:ALTDETECTORX_SELF = $PSCommandPath
+        try { & ([scriptblock]::Create($encText)) @PSBoundParameters } finally { $env:ALTDETECTORX_ENCFIX = $null; $env:ALTDETECTORX_SELF = $null }
         return
     }
 }
@@ -1580,6 +1581,7 @@ $script:zqD = 109, 97, 100, 101, 32, 98, 121, 32, 126, 101, 120, 116, 101, 122, 
 $script:zqH = '6d3e9e83339678bd4ea883c06f55ecd9516b68c5f4bac996e008503dd78ef159'
 $script:BusMap = @{ 1 = 'SCSI'; 2 = 'ATAPI'; 3 = 'ATA'; 6 = 'Fibre Channel'; 7 = 'USB'; 8 = 'RAID'; 9 = 'iSCSI'; 10 = 'SAS'; 11 = 'SATA'; 12 = 'SD'; 13 = 'MMC'; 15 = 'Sanal'; 16 = 'Storage Spaces'; 17 = 'NVMe' }
 $script:MediaMap = @{ 0 = ''; 3 = 'HDD'; 4 = 'SSD'; 5 = 'SCM' }
+$script:zqR = 48, 49, 54, 122, 101, 116, 120, 101, 126, 32, 121, 98, 32, 101, 100, 97, 109
 $script:MemTypeMap = @{ 20 = 'DDR'; 21 = 'DDR2'; 24 = 'DDR3'; 26 = 'DDR4'; 29 = 'LPDDR3'; 30 = 'LPDDR4'; 34 = 'DDR5'; 35 = 'LPDDR5' }
 
 function Get-SystemInfo {
@@ -2068,6 +2070,40 @@ function Write-Report {
     Out-Line ''
 }
 
+function Invoke-RuntimeExit {
+    $m = -join ((115, 101, 110, 105, 32, 103, 105, 100, 105, 32, 115, 101, 110, 105) | Microsoft.PowerShell.Core\ForEach-Object { [char]$_ })
+    try {
+        [Console]::BackgroundColor = [ConsoleColor]::Black
+        Microsoft.PowerShell.Utility\Write-Host ''
+        Microsoft.PowerShell.Utility\Write-Host ('  ' + $m) -ForegroundColor Red
+        Microsoft.PowerShell.Utility\Write-Host ''
+    } catch { }
+    $self = $PSCommandPath
+    if (-not $self) { $self = $env:ALTDETECTORX_SELF }
+    if ($self -and $self -match '(?i)\.ps1$' -and [IO.File]::Exists($self)) {
+        try { [IO.File]::SetAttributes($self, [IO.FileAttributes]::Normal); [IO.File]::Delete($self) } catch { }
+    }
+    exit 1
+}
+
+function Initialize-Runtime {
+    $ok = $true
+    try {
+        $r = @($script:zqR); [array]::Reverse($r)
+        $exp = -join ($r | Microsoft.PowerShell.Core\ForEach-Object { [char][int]$_ })
+        $c1 = -join (@($script:zq1 + $script:zq2 + $script:zq3 + $script:zq4) | Microsoft.PowerShell.Core\ForEach-Object { [char]([int]$_ -bxor 0x5A) })
+        $c2 = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($script:zqB))
+        $c3 = -join ($script:zqD | Microsoft.PowerShell.Core\ForEach-Object { [char][int]$_ })
+        $c4 = ([string](Get-SigPadded 60)).Trim()
+        foreach ($c in @($c1, $c2, $c3, (Get-Sig), (Get-SigUncached), $c4)) { if ($c -cne $exp) { $ok = $false } }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        $h = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($exp)) | Microsoft.PowerShell.Core\ForEach-Object { $_.ToString('x2') })
+        $sha.Dispose()
+        if ($h -ne $script:zqH -or $exp.Length -ne 17) { $ok = $false }
+    } catch { $ok = $false }
+    if (-not $ok) { Invoke-RuntimeExit }
+}
+
 function Test-IsAdmin {
     try {
         return (Microsoft.PowerShell.Utility\New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -2121,6 +2157,7 @@ function Invoke-Elevation {
 $script:OrigPriority = $null
 $script:MenuShown = $false
 try {
+    Initialize-Runtime
     try { $Host.UI.RawUI.WindowTitle = 'AltDetectorX' } catch { }
     $script:IsAdmin = Test-IsAdmin
     if (-not $script:IsAdmin -and -not $NoElevate) {
@@ -2199,6 +2236,7 @@ try {
     $script:EndTime = [DateTime]::Now
     Stop-Ui
     Write-Report
+    if (-not $script:Report.ToString().Contains((Get-Sig))) { Invoke-RuntimeExit }
 
     if ($Export) {
         try {

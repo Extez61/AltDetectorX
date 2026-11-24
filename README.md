@@ -73,3 +73,7 @@ Bu proje, [Enr1c0o/Powershell-Scripts](https://github.com/Enr1c0o/Powershell-Scr
 
 - Windows 10 / 11
 - Windows PowerShell 5.1 ya da PowerShell 7
+
+## Lisans
+
+Kullanım ücretsizdir; değiştirip paylaşabilirsiniz, ancak `made by ~extez610` imzası kaldırılamaz ve yazılım satılamaz. Ayrıntılar için [LICENSE](LICENSE) dosyasına bakın.
