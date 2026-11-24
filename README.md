@@ -4,24 +4,13 @@ Windows'ta kullanılmış Minecraft hesaplarını (altları) ve iz silme belirti
 
 ## Güvenli mi? Kendin denetlet
 
-Bu script'i çalıştırmadan önce güvenli olduğundan emin olmak istiyorsan, `AltDetectorX.ps1`'in içeriğini herhangi bir yapay zekaya (ChatGPT, Claude, Gemini vb.) verip aşağıdaki promptu kullanabilirsin:
+Bu script'i çalıştırmadan önce emin olmak istiyorsan, aşağıdaki promptu herhangi bir yapay zekaya (ChatGPT, Claude, Gemini vb.) yapıştır:
 
 ```text
-Sana bir PowerShell script'i vereceğim. Bunu satır satır incele ve şunları söyle:
-1. Ne yapıyor? Kısaca özetle.
-2. İnternete veri gönderiyor mu? Herhangi bir dosyayı internete yüklüyor,
-   bir sunucuya bilgi yolluyor ya da uzaktan komut indirip çalıştırıyor mu?
-3. Dosyaları siliyor, değiştiriyor ya da sistemde kalıcı değişiklik
-   (kayıt defteri, görev zamanlayıcı, başlangıç, güvenlik ayarı) yapıyor mu?
-4. Şifre, token, çerez, cüzdan gibi hassas verileri okuyup dışarı çıkarıyor mu?
-5. Gizlenmiş/şifrelenmiş (obfuscated) ya da amacı belirsiz, şüpheli kod var mı?
-6. Sonuç: Bu script'i çalıştırmak senin değerlendirmene göre güvenli mi?
-
-Script'i olduğu gibi, hiçbir kısmını atlamadan değerlendir ve sade bir dille,
-teknik olmayan birinin anlayacağı şekilde açıkla.
+Şu PowerShell script'ini incele: https://raw.githubusercontent.com/Extez61/AltDetectorX/main/AltDetectorX.ps1
+İnternete veri gönderiyor, dosya siliyor/değiştiriyor ya da şifre/token gibi
+hassas veri çalıyor mu? Çalıştırmak güvenli mi? Sade bir dille açıkla.
 ```
-
-> İpucu: Yukarıdaki tek satırlık komut yerine, önce `AltDetectorX.ps1` dosyasını [doğrudan burada](AltDetectorX.ps1) açıp okuyabilir ya da yapay zekaya yapıştırabilirsin. Script açık kaynaktır; tüm kodu bu repoda görünür.
 
 ## Hızlı başlatma (tek satır)
 
