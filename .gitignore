@@ -1,0 +1,5 @@
+# Yedekler
+*.bak
+
+# Tarama raporları (kişisel hesap adları ve dosya yolları içerir)
+AltDetectorX_*.txt
