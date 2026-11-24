@@ -7,10 +7,13 @@ Windows'ta kullanılmış Minecraft hesaplarını (altları) ve iz silme belirti
 İndirmeden, doğrudan CMD'ye (ya da Win+R penceresine) yapıştırıp çalıştırın:
 
 ```bat
-powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=3072; & ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/Extez61/AltDetectorX/main/AltDetectorX.ps1')))"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Extez61/AltDetectorX/main/AltDetectorX.ps1 -TimeoutSec 30 | iex"
 ```
 
-Script en son sürümü GitHub'dan indirip bellekte çalıştırır, kalıcı dosya bırakmaz. Yönetici izni ister, sonra menüyü açar. Parametre vermek için parametreyi `)))` ile son `"` işaretinin arasına yazın, örneğin `...AltDetectorX.ps1'))) -Mode Quick"`.
+Script en son sürümü GitHub'dan indirip bellekte çalıştırır, kalıcı dosya bırakmaz. Yönetici izni ister, sonra menüyü açar; tarama türü ve seçenekler menüden seçilir.
+
+- GitHub'a bağlantı takılırsa komut 30 saniye sonra hata verip kapanır (sonsuza kadar donmaz). Bu durumda komutu tekrar çalıştırın.
+- Parametreyle (`-Mode`, `-Export` vb.) çalıştırmak için `AltDetectorX.ps1`'i indirip aşağıdaki gibi çalıştırın.
 
 > Bu komut yalnızca repo herkese açıkken (public) çalışır.
 
@@ -45,6 +48,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\AltDetectorX.ps1
 - **Diğer:** açık Java süreçleri, WSL dağıtımları, dual boot Linux bölümleri ve sanal makine diskleri
 
 Silinmiş dosya kontrollerinin tamamı için yönetici yetkisi gerekir.
+
+## Esinlenme
+
+Bu proje, [Enr1c0o/Powershell-Scripts](https://github.com/Enr1c0o/Powershell-Scripts) reposundaki [Alt-Detector.ps1](https://github.com/Enr1c0o/Powershell-Scripts/blob/main/Alt-Detector.ps1) script'inden esinlenerek yapıldı.
 
 ## Gereksinimler
 
