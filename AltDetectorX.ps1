@@ -1951,14 +1951,44 @@ function Show-Menu {
     $sel = 1
     $panel = Get-PanelLines
     $arrow = [string][char]0x25BA
-    $script:MenuInit = $false
-    $prevRows = 0
-    while ($true) {
-        try { [Console]::CursorVisible = $false } catch { }
-        $m = $script:MarginText
-        $pw = Get-OutWidth
+    $m = $script:MarginText
+    $itemRow = @{}     # menü öğesi -> ekrandaki satır
+    $lastW = -1; $lastH = -1
+    $fullW = 80
 
-        # Çizilecek satırları renkli parçalar halinde hazırla (her satır = parça listesi).
+    # Tek bir satırı (renkli parçalar) doğrudan konsola yazar; Write-Host'tan çok daha hızlıdır.
+    function Write-MenuRow([int]$Row, $Parts) {
+        try {
+            [Console]::SetCursorPosition(0, $Row)
+            $col = 0
+            foreach ($p in $Parts) {
+                [Console]::BackgroundColor = [ConsoleColor]::Black
+                [Console]::ForegroundColor = $p.F
+                if ($p.B) { [Console]::BackgroundColor = $p.B }
+                [Console]::Write($p.T)
+                $col += $p.T.Length
+            }
+            [Console]::BackgroundColor = [ConsoleColor]::Black
+            [Console]::ForegroundColor = [ConsoleColor]::Gray
+            if ($col -lt $fullW - 1) { [Console]::Write(' ' * ($fullW - 1 - $col)) }
+        } catch { }
+    }
+
+    function Get-ItemParts([int]$I) {
+        $it = $items[$I]
+        $on = ($I -eq $sel)
+        $prefix = '    '; if ($on) { $prefix = "  $arrow " }
+        $text = $it.Label
+        if ($it.Type -eq 'opt') { $box = '[ ]'; if ($opts[$it.Key]) { $box = '[x]' }; $text = "$box $($it.Label)" }
+        $lbl = (" {0,-28}" -f $text)
+        if ($on) { return @(@{ T = $m + $prefix; F = 'Cyan' }, @{ T = $lbl; F = 'Black'; B = 'Cyan' }) }
+        return @(@{ T = $m + $prefix; F = 'Cyan' }, @{ T = $lbl; F = 'White' })
+    }
+
+    # Tüm menüyü bir kez çizer (ilk açılışta ve pencere boyutu değişince).
+    function Show-FullMenu {
+        try { [Console]::BackgroundColor = [ConsoleColor]::Black; [Console]::Clear() } catch { }
+        $pw = Get-OutWidth
         $rows = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
         $rows.Add(@())
         foreach ($l in $panel) {
@@ -1967,81 +1997,51 @@ function Show-Menu {
         }
         $rows.Add(@())
         $rows.Add(@(@{ T = $m + '  ' + ([string][char]0x2500 * [Math]::Min(66, $pw - 4)); F = 'DarkCyan' }))
+        $top = 0; try { $top = [Console]::WindowTop } catch { }
         for ($i = 0; $i -lt $items.Count; $i++) {
-            $it = $items[$i]
-            if ($it.Type -eq 'sep') { $rows.Add(@()); continue }
-            $on = ($i -eq $sel)
-            $prefix = '    '; if ($on) { $prefix = "  $arrow " }
-            $text = $it.Label
-            if ($it.Type -eq 'opt') { $box = '[ ]'; if ($opts[$it.Key]) { $box = '[x]' }; $text = "$box $($it.Label)" }
-            $lbl = (" {0,-28}" -f $text)
-            if ($on) { $rows.Add(@(@{ T = $m + $prefix; F = 'Cyan' }, @{ T = $lbl; F = 'Black'; B = 'Cyan' })) }
-            else { $rows.Add(@(@{ T = $m + $prefix; F = 'Cyan' }, @{ T = $lbl; F = 'White' })) }
+            if ($items[$i].Type -eq 'sep') { $rows.Add(@()); continue }
+            $itemRow[$i] = $top + $rows.Count
+            $rows.Add((Get-ItemParts $i))
         }
         $rows.Add(@())
         $hint = ("  {0}/{1} - SEÇ     ENTER - ONAYLA     BO{2}LUK - AÇ/KAPAT     1-2-3 - HIZLI SEÇİM     ESC - ÇIKI{2}" -f [char]0x2191, [char]0x2193, [char]0x015E)
         foreach ($ln in (Split-Wrap $hint $pw '  ')) { $rows.Add(@(@{ T = $m + $ln; F = 'DarkGray' })) }
         $rows.Add(@())
         $rows.Add(@(@{ T = $m + (Get-SigPadded $pw); F = 'DarkGray' }))
+        for ($r = 0; $r -lt $rows.Count; $r++) { Write-MenuRow ($top + $r) $rows[$r] }
+        try { [Console]::SetCursorPosition(0, $top) } catch { }
+    }
 
-        $useCur = $false
-        try { $useCur = -not [Console]::IsOutputRedirected } catch { $useCur = $false }
-
-        if ($useCur) {
-            # İmleci başa alıp yerinde çiz: [Console]::Clear() bazı terminallerde içeriği aşağı kaydırıp
-            # başlığı geride bıraktığı için her döngüde temizlemek yerine satırları üzerine yazıyoruz.
-            if (-not $script:MenuInit) { try { [Console]::Clear() } catch { }; $script:MenuInit = $true }
-            $fullW = 80; try { $fullW = [Console]::WindowWidth } catch { }
-            $top = 0; try { $top = [Console]::WindowTop } catch { }
-            $r = $top
-            foreach ($run in $rows) {
-                try { [Console]::SetCursorPosition(0, $r) } catch { }
-                $col = 0
-                foreach ($seg in $run) {
-                    try {
-                        [Console]::BackgroundColor = [ConsoleColor]::Black
-                        [Console]::ForegroundColor = $seg.F
-                        if ($seg.B) { [Console]::BackgroundColor = $seg.B }
-                    } catch { }
-                    Microsoft.PowerShell.Utility\Write-Host $seg.T -NoNewline
-                    try { [Console]::BackgroundColor = [ConsoleColor]::Black; [Console]::ForegroundColor = [ConsoleColor]::Gray } catch { }
-                    $col += ([string]$seg.T).Length
-                }
-                if ($col -lt $fullW - 1) { Microsoft.PowerShell.Utility\Write-Host (' ' * ($fullW - 1 - $col)) -NoNewline }
-                $r++
-            }
-            for ($j = $rows.Count; $j -lt $prevRows; $j++) {
-                try { [Console]::SetCursorPosition(0, $top + $j); [Console]::BackgroundColor = [ConsoleColor]::Black; [Console]::ForegroundColor = [ConsoleColor]::Gray } catch { }
-                Microsoft.PowerShell.Utility\Write-Host (' ' * ($fullW - 1)) -NoNewline
-            }
-            $prevRows = $rows.Count
-            try { [Console]::SetCursorPosition(0, $top) } catch { }
-        } else {
-            try { [Console]::Clear() } catch { }
-            foreach ($run in $rows) {
-                if ($run.Count -eq 0) { Microsoft.PowerShell.Utility\Write-Host ''; continue }
-                for ($s = 0; $s -lt $run.Count; $s++) {
-                    $seg = $run[$s]; $last = ($s -eq $run.Count - 1)
-                    if ($seg.B) { Microsoft.PowerShell.Utility\Write-Host $seg.T -ForegroundColor $seg.F -BackgroundColor $seg.B -NoNewline:(-not $last) }
-                    else { Microsoft.PowerShell.Utility\Write-Host $seg.T -ForegroundColor $seg.F -NoNewline:(-not $last) }
-                }
-            }
+    while ($true) {
+        try { [Console]::CursorVisible = $false } catch { }
+        $w = 80; $h = 25
+        try { $w = [Console]::WindowWidth; $h = [Console]::WindowHeight } catch { }
+        if ($w -ne $lastW -or $h -ne $lastH) {
+            $fullW = $w; $lastW = $w; $lastH = $h
+            Show-FullMenu
         }
 
         $k = [Console]::ReadKey($true)
         $key = [string]$k.Key
-        if ($key -in 'UpArrow', 'W') { do { $sel = ($sel - 1 + $items.Count) % $items.Count } while ($items[$sel].Type -eq 'sep'); continue }
-        if ($key -in 'DownArrow', 'S', 'Tab') { do { $sel = ($sel + 1) % $items.Count } while ($items[$sel].Type -eq 'sep'); continue }
-        if ($key -eq 'Escape') { return $null }
-        $pick = $null
-        if ($key -in 'D1', 'NumPad1') { $pick = 'Quick' } elseif ($key -in 'D2', 'NumPad2') { $pick = 'Normal' } elseif ($key -in 'D3', 'NumPad3') { $pick = 'Deep' }
-        if ($key -in 'Enter', 'Spacebar') {
-            $it = $items[$sel]
-            if ($it.Type -eq 'opt') { $opts[$it.Key] = -not $opts[$it.Key]; continue }
-            if ($it.Type -eq 'exit') { return $null }
-            if ($it.Type -eq 'scan') { $pick = $it.Mode }
+        $old = $sel
+        if ($key -in 'UpArrow', 'W') { do { $sel = ($sel - 1 + $items.Count) % $items.Count } while ($items[$sel].Type -eq 'sep') }
+        elseif ($key -in 'DownArrow', 'S', 'Tab') { do { $sel = ($sel + 1) % $items.Count } while ($items[$sel].Type -eq 'sep') }
+        elseif ($key -eq 'Escape') { return $null }
+        else {
+            $pick = $null
+            if ($key -in 'D1', 'NumPad1') { $pick = 'Quick' } elseif ($key -in 'D2', 'NumPad2') { $pick = 'Normal' } elseif ($key -in 'D3', 'NumPad3') { $pick = 'Deep' }
+            if ($key -in 'Enter', 'Spacebar') {
+                $it = $items[$sel]
+                if ($it.Type -eq 'opt') { $opts[$it.Key] = -not $opts[$it.Key] }
+                elseif ($it.Type -eq 'exit') { return $null }
+                elseif ($it.Type -eq 'scan') { $pick = $it.Mode }
+            }
+            if ($pick) { return [pscustomobject]@{ Mode = $pick; Paths = $opts.Paths; Wsl = $opts.Wsl; Export = $opts.Export } }
         }
-        if ($pick) { return [pscustomobject]@{ Mode = $pick; Paths = $opts.Paths; Wsl = $opts.Wsl; Export = $opts.Export } }
+        # Yalnızca değişen satırları yeniden çiz
+        if ($itemRow.ContainsKey($old)) { Write-MenuRow $itemRow[$old] (Get-ItemParts $old) }
+        if ($sel -ne $old -and $itemRow.ContainsKey($sel)) { Write-MenuRow $itemRow[$sel] (Get-ItemParts $sel) }
+        try { [Console]::SetCursorPosition(0, [Console]::WindowTop) } catch { }
     }
 }
 
