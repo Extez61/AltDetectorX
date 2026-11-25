@@ -26,7 +26,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "curl.exe -fsSL -m 30 --r
 
 This command downloads and runs the small launcher in this repository ([start.ps1](start.ps1)). The launcher downloads `AltDetectorX.ps1`, `AltDetectorX.bat` and the English language file into `%TEMP%\AltDetectorX` and runs the `.bat` in the same terminal. The launcher is short; you can read it before running.
 
-When the script starts, it asks for the language: **EN** (English) or **TR** (Turkish). Then it asks for administrator permission and opens the menu, where you choose the scan type and options. All menu options (show file paths, scan WSL distributions, save the report to the desktop) are enabled by default; turn off the ones you do not need with the Space key.
+When the script starts, it asks for the language: **EN** (English) or **TR** (Turkish). Then it asks for administrator permission and opens the menu, where you choose the scan type and options. All menu options (show file paths, scan WSL distributions, save the report to the desktop) are enabled by default; turn off the ones you do not need with the Space key. The **Hide username** option is off by default; when turned on, the Windows user name in file paths is shown as `***` both on the scan screen and in the report (for example `C:\Users\***\AppData\...`). Minecraft account names are never hidden.
 
 > Administrator permission: Windows cannot give administrator rights to an already open terminal, so when permission is requested the scan opens in a separate administrator window. To keep everything in the same window, open the terminal with **"Run as administrator"**, or on Windows 11 enable **Settings > System > For developers > Enable sudo** (inline mode).
 
@@ -67,6 +67,7 @@ Turkish text is built into the script. English text is kept in [lang/en.json](la
 | `-NoWsl` | Does not scan WSL distributions |
 | `-NoMenu` | Skips the menu and starts scanning immediately |
 | `-NoElevate` | Runs in limited mode without asking for administrator permission |
+| `-HideUser` | Hides the Windows user name in file paths on screen and in the report |
 
 ### What it checks
 
@@ -123,7 +124,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "curl.exe -fsSL -m 30 --r
 
 Bu komut repodaki küçük başlatıcıyı ([start.ps1](start.ps1)) indirip çalıştırır. Başlatıcı da `AltDetectorX.ps1`, `AltDetectorX.bat` ve İngilizce dil dosyasını `%TEMP%\AltDetectorX` klasörüne indirip `.bat`'ı aynı terminalde çalıştırır. Başlatıcının içeriği kısadır, çalıştırmadan önce okuyabilirsiniz.
 
-Script açılınca dili sorar: **EN** (İngilizce) ya da **TR** (Türkçe). Ardından yönetici izni ister ve menüyü açar; tarama türü ve seçenekler menüden seçilir. Menüdeki seçeneklerin hepsi (dosya yollarını göster, WSL dağıtımlarını tara, raporu masaüstüne kaydet) varsayılan olarak açık gelir; istemediğinizi Boşluk tuşuyla kapatabilirsiniz.
+Script açılınca dili sorar: **EN** (İngilizce) ya da **TR** (Türkçe). Ardından yönetici izni ister ve menüyü açar; tarama türü ve seçenekler menüden seçilir. Menüdeki seçeneklerin hepsi (dosya yollarını göster, WSL dağıtımlarını tara, raporu masaüstüne kaydet) varsayılan olarak açık gelir; istemediğinizi Boşluk tuşuyla kapatabilirsiniz. **Kullanıcı adını gizle** seçeneği ise varsayılan olarak kapalıdır; açılırsa dosya yollarındaki Windows kullanıcı adı hem tarama ekranında hem raporda `***` olarak gösterilir (ör. `C:\Users\***\AppData\...`). Minecraft hesap adları hiçbir zaman gizlenmez.
 
 > Yönetici izni: Windows, normal bir terminale sonradan yönetici yetkisi veremez; bu yüzden izin istendiğinde tarama ayrı bir yönetici penceresinde açılır. Her şeyin aynı pencerede çalışması için terminali **"Yönetici olarak çalıştır"** ile açın ya da Windows 11'de **Ayarlar > Sistem > Geliştiriciler için > sudo'yu etkinleştir** (satır içi mod) seçeneğini açın.
 
@@ -164,6 +165,7 @@ Türkçe metinler script'in içindedir. İngilizce metinler [lang/en.json](lang/
 | `-NoWsl` | WSL dağıtımlarını taramaz |
 | `-NoMenu` | Menüyü atlayıp doğrudan taramaya başlar |
 | `-NoElevate` | Yönetici izni istemeden, sınırlı modda çalışır |
+| `-HideUser` | Dosya yollarındaki Windows kullanıcı adını ekranda ve raporda gizler |
 
 ### Neleri kontrol eder
 

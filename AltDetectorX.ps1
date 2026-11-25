@@ -7,6 +7,7 @@ param(
     [switch]$NoWsl,
     [switch]$NoMenu,
     [switch]$NoElevate,
+    [switch]$HideUser,
     [ValidateSet('TR', 'EN')]
     [string]$Lang
 )
@@ -169,6 +170,32 @@ function Select-Language {
 }
 
 # Uyarı seviyesini ekranda gösterilecek biçime çevirir (iç değerler Türkçe kalır).
+# Windows kullanıcı adını gizleme (isteğe bağlı, varsayılan kapalı). Açıksa ekrana ve rapora yazılan
+# dosya yollarında "\Users\<ad>\" ve profil klasörü adları "***" olarak gösterilir. Minecraft hesap
+# adları gizlenmez; yalnızca yol parçaları ve "[Windows kullanıcısı: ...]" etiketi maskelenir.
+$script:HideUserOn = $false
+$script:UserMaskRx = $null
+
+function Initialize-UserMask {
+    $script:HideUserOn = $true
+    $names = Microsoft.PowerShell.Utility\New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    if ($env:USERNAME) { [void]$names.Add($env:USERNAME) }
+    try { foreach ($p in (Get-ProfileRoots)) { [void]$names.Add([IO.Path]::GetFileName($p.TrimEnd('\'))) } } catch { }
+    foreach ($skip in 'Public', 'Default', 'Default User', 'All Users', 'defaultuser0', '') { [void]$names.Remove($skip) }
+    $end = '(?=\\|$|[\s\)\]''",;])'
+    $parts = @("(?<=\\Users\\)(?!(?:Public|Default|Default User|All Users)(?:\\|$))[^\\\r\n]+?$end")
+    if ($names.Count -gt 0) {
+        $alt = (@($names) | Microsoft.PowerShell.Utility\Sort-Object Length -Descending | Microsoft.PowerShell.Core\ForEach-Object { [regex]::Escape($_) }) -join '|'
+        $parts += "(?<=\\)(?:$alt)$end"
+    }
+    $script:UserMaskRx = Microsoft.PowerShell.Utility\New-Object Text.RegularExpressions.Regex (($parts -join '|'), ([Text.RegularExpressions.RegexOptions]'IgnoreCase, Compiled'))
+}
+
+function Hide-UserInfo([string]$s) {
+    if ($null -eq $script:UserMaskRx -or -not $s) { return $s }
+    return $script:UserMaskRx.Replace($s, '***')
+}
+
 function Get-LevelText([string]$Level) {
     $t = L $Level
     if ($script:Lang -eq 'EN') { return $t.ToUpperInvariant() }
@@ -204,6 +231,7 @@ function Split-Wrap([string]$Text, [int]$Width, [string]$Indent) {
 
 function Out-Line {
     param([string]$Text = '', [string]$Color = 'Gray', [switch]$NoNewline, [string]$Indent)
+    $Text = Hide-UserInfo $Text
     if (-not $NoNewline -and $script:OutAtStart -and $Text) {
         $w = Get-OutWidth
         if ($Text.Length -gt $w) {
@@ -323,7 +351,7 @@ function Write-At([int]$Row, [string]$Text, [ConsoleColor]$Color) {
     [Console]::SetCursorPosition($script:MarginX, $Row)
     [Console]::BackgroundColor = [ConsoleColor]::Black
     [Console]::ForegroundColor = $Color
-    [Console]::Write((Format-Fit $Text $script:UiInner))
+    [Console]::Write((Format-Fit (Hide-UserInfo $Text) $script:UiInner))
 }
 
 function Show-Frame([string]$Activity, [string]$Status, [int]$Percent) {
@@ -391,6 +419,7 @@ function Show-Progress {
     if (-not $Activity) { $Activity = $script:UiPhase }
     if ($script:Tui) { Show-Frame $Activity $Status $Percent; return }
     $st = $Status; if ($Recent) { $st = "$Status  |  $Recent" }; if (-not $st) { $st = '...' }
+    $st = Hide-UserInfo $st; $Activity = Hide-UserInfo $Activity
     if ($Percent -ge 0) {
         Microsoft.PowerShell.Utility\Write-Progress -Id $Id -Activity $Activity -Status $st -PercentComplete ([Math]::Min(100, $Percent))
     } else {
@@ -517,7 +546,8 @@ function Get-LauncherInfo {
         }
     }
     if ($orig -match '(?i)^[a-z]:\\Users\\([^\\]+)\\' -and $Matches[1] -ne $script:CurrentUser) {
-        $detail = (((L '[Windows kullanıcısı: {0}] {1}') -f ($($Matches[1])), ($detail))).Trim()
+        $wu = $Matches[1]; if ($script:HideUserOn) { $wu = '***' }
+        $detail = (((L '[Windows kullanıcısı: {0}] {1}') -f ($wu), ($detail))).Trim()
     }
     foreach ($wr in $script:WslRoots.Keys) {
         if ($orig.StartsWith($wr + '\', [StringComparison]::OrdinalIgnoreCase)) {
@@ -2059,11 +2089,13 @@ function Show-Menu {
         @{ Type = 'opt'; Key = 'Paths'; Label = (L 'Dosya yollarını göster') },
         @{ Type = 'opt'; Key = 'Wsl'; Label = (L 'WSL dağıtımlarını tara') },
         @{ Type = 'opt'; Key = 'Export'; Label = (L 'Raporu masaüstüne kaydet') },
+        @{ Type = 'opt'; Key = 'HideUser'; Label = (L 'Kullanıcı adını gizle') },
         @{ Type = 'sep' },
         @{ Type = 'exit'; Label = (L 'Çıkış') }
     )
     # Menüde tüm seçenekler varsayılan olarak açık gelir; kullanıcı Boşluk ile kapatabilir.
-    $opts = @{ Paths = $true; Wsl = $true; Export = $true }
+    # Kullanıcı adını gizleme ise varsayılan olarak kapalıdır.
+    $opts = @{ Paths = $true; Wsl = $true; Export = $true; HideUser = [bool]$HideUser }
     $sel = 1
     $panel = Get-PanelLines
     $arrow = [string][char]0x25BA
@@ -2168,7 +2200,7 @@ function Show-Menu {
                 elseif ($it.Type -eq 'exit') { return $null }
                 elseif ($it.Type -eq 'scan') { $pick = $it.Mode }
             }
-            if ($pick) { return [pscustomobject]@{ Mode = $pick; Paths = $opts.Paths; Wsl = $opts.Wsl; Export = $opts.Export } }
+            if ($pick) { return [pscustomobject]@{ Mode = $pick; Paths = $opts.Paths; Wsl = $opts.Wsl; Export = $opts.Export; HideUser = $opts.HideUser } }
         }
         # Yalnızca değişen satırları yeniden çiz
         if ($itemRow.ContainsKey($old)) { Write-MenuRow $itemRow[$old] (Get-ItemParts $old) }
@@ -2439,6 +2471,7 @@ try {
         $Mode = $choice.Mode
         $Paths = [switch]$choice.Paths
         $NoWsl = [switch](-not $choice.Wsl)
+        $HideUser = [switch]$choice.HideUser
         if ($choice.Export -and -not $Export) {
             $Export = Microsoft.PowerShell.Management\Join-Path ([Environment]::GetFolderPath('Desktop')) ("AltDetectorX_{0:yyyyMMdd_HHmm}.txt" -f [DateTime]::Now)
         }
@@ -2446,6 +2479,7 @@ try {
         Microsoft.PowerShell.Utility\Write-Host ''
         Microsoft.PowerShell.Utility\Write-Host ((L '  AltDetectorX: {0} başlıyor.') -f (L $script:ModeLabel[$Mode])) -ForegroundColor Cyan
     }
+    if ($HideUser) { Initialize-UserMask }
 
     try {
         $me = [Diagnostics.Process]::GetCurrentProcess()
