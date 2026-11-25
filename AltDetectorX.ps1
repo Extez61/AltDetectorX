@@ -6,7 +6,9 @@ param(
     [string]$Export,
     [switch]$NoWsl,
     [switch]$NoMenu,
-    [switch]$NoElevate
+    [switch]$NoElevate,
+    [ValidateSet('TR', 'EN')]
+    [string]$Lang
 )
 $script:EncProbe = 'ğüİ'
 if ($script:EncProbe -cne ([string][char]0x011F + [char]0x00FC + [char]0x0130)) {
@@ -25,7 +27,7 @@ $script:ForwardArgs = Microsoft.PowerShell.Utility\New-Object System.Collections
 if ($null -ne $PSBoundParameters) {
     foreach ($kv in $PSBoundParameters.GetEnumerator()) {
         if ($kv.Key -eq 'NoElevate') { continue }
-        $script:ParamGiven = $true
+        if ($kv.Key -ne 'Lang') { $script:ParamGiven = $true }
         if ($kv.Value -is [System.Management.Automation.SwitchParameter]) {
             if ($kv.Value.IsPresent) { $script:ForwardArgs.Add("-$($kv.Key)") }
         } else {
@@ -41,7 +43,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 $script:StartTime = [DateTime]::Now
 
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
-    Microsoft.PowerShell.Utility\Write-Host 'AltDetectorX sadece Windows üzerinde çalışır.' -ForegroundColor Red
+    Microsoft.PowerShell.Utility\Write-Host 'AltDetectorX only runs on Windows. / AltDetectorX sadece Windows üzerinde çalışır.' -ForegroundColor Red
     return
 }
 
@@ -59,6 +61,119 @@ function Set-DarkBase {
 }
 Set-DarkBase
 try { [Console]::Clear() } catch { }
+
+# Dil desteği: Türkçe metinler script'in içindedir (dosya gerekmez). İngilizce seçilirse metinler
+# lang\en.json dosyasından okunur: önce script'in yanında, sonra %TEMP%\AltDetectorX önbelleğinde
+# aranır; yoksa GitHub'dan bir kez indirilip önbelleğe yazılır. Eksik çeviri Türkçe kalır.
+$script:Lang = 'TR'
+$script:Dict = $null
+$script:LangUrl = 'https://raw.githubusercontent.com/Extez61/AltDetectorX/main/lang/en.json'
+
+function L([string]$s) {
+    if ($null -eq $script:Dict -or -not $s) { return $s }
+    $core = $s.Trim()
+    if (-not $core) { return $s }
+    if ($script:Dict.ContainsKey($core)) { $t = $script:Dict[$core] }
+    else {
+        # Küçük harfle başlayan metin için büyük harfli anahtarı dene ("hayır" -> "Hayır" -> "No" -> "no")
+        $alt = $core.Substring(0, 1).ToUpper([Globalization.CultureInfo]'tr-TR') + $core.Substring(1)
+        if ($alt -ceq $core -or -not $script:Dict.ContainsKey($alt)) { return $s }
+        $t = $script:Dict[$alt]
+        if ($t) { $t = $t.Substring(0, 1).ToLowerInvariant() + $t.Substring(1) }
+    }
+    $i = $s.IndexOf($core)
+    return $s.Substring(0, $i) + $t + $s.Substring($i + $core.Length)
+}
+
+function Read-LangFile([string]$Path) {
+    try {
+        if (-not [IO.File]::Exists($Path)) { return $null }
+        $obj = Microsoft.PowerShell.Utility\ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)) -ErrorAction Stop
+        $d = Microsoft.PowerShell.Utility\New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
+        foreach ($p in $obj.PSObject.Properties) { if ($p.Value -is [string] -and $p.Name -notlike '_*') { $d[$p.Name] = $p.Value } }
+        if ($d.Count -lt 10) { return $null }
+        return , $d
+    } catch { return $null }
+}
+
+function Import-Language([string]$Code) {
+    if ($Code -ne 'EN') { $script:Lang = 'TR'; $script:Dict = $null; return $true }
+    $cacheDir = Microsoft.PowerShell.Management\Join-Path ([IO.Path]::GetTempPath()) 'AltDetectorX\lang'
+    $cache = Microsoft.PowerShell.Management\Join-Path $cacheDir 'en.json'
+    $cands = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[string]
+    foreach ($sp in @($PSCommandPath, $env:ALTDETECTORX_SELF)) {
+        if ($sp) { $cands.Add((Microsoft.PowerShell.Management\Join-Path ([IO.Path]::GetDirectoryName($sp)) 'lang\en.json')) }
+    }
+    $cands.Add($cache)
+    $dict = $null; $from = $null
+    foreach ($c in $cands) { $dict = Read-LangFile $c; if ($dict) { $from = $c; break } }
+    if (-not $dict) {
+        $curl = Microsoft.PowerShell.Management\Join-Path $env:SystemRoot 'System32\curl.exe'
+        if ([IO.File]::Exists($curl)) {
+            try { [void][IO.Directory]::CreateDirectory($cacheDir) } catch { }
+            $tmpFile = $cache + '.part'
+            [void](Invoke-Native $curl ('-fsSL --connect-timeout 10 --max-time 30 --retry 2 -o "{0}" {1}' -f $tmpFile, $script:LangUrl) 60000)
+            $dict = Read-LangFile $tmpFile
+            if ($dict) { try { [IO.File]::Copy($tmpFile, $cache, $true) } catch { }; $from = $cache }
+            try { [IO.File]::Delete($tmpFile) } catch { }
+        }
+    }
+    if (-not $dict) { return $false }
+    # Yönetici penceresi (ayrı süreç) de aynı dosyayı bulabilsin diye önbelleğe kopyala
+    if ($from -ne $cache) { try { [void][IO.Directory]::CreateDirectory($cacheDir); [IO.File]::Copy($from, $cache, $true) } catch { } }
+    $script:Dict = $dict
+    $script:Lang = 'EN'
+    return $true
+}
+
+# Açılışta dil seçimi (EN / TR). Ok tuşları, Enter, E/T ya da 1/2 ile seçilir.
+function Select-Language {
+    $opts = @(@('EN', 'English'), @('TR', 'Türkçe'))
+    $sel = 0
+    try { if ([Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName -eq 'tr' -or [Globalization.CultureInfo]::CurrentCulture.TwoLetterISOLanguageName -eq 'tr') { $sel = 1 } } catch { }
+    $arrow = [string][char]0x25BA
+    $m = $script:MarginText
+    $drawOpt = {
+        param($i, $on)
+        try {
+            [Console]::SetCursorPosition(0, 5 + $i)
+            [Console]::BackgroundColor = [ConsoleColor]::Black; [Console]::ForegroundColor = [ConsoleColor]::Cyan
+            if ($on) { [Console]::Write($m + "  $arrow ") } else { [Console]::Write($m + '    ') }
+            if ($on) { [Console]::BackgroundColor = [ConsoleColor]::Cyan; [Console]::ForegroundColor = [ConsoleColor]::Black }
+            else { [Console]::ForegroundColor = [ConsoleColor]::White }
+            [Console]::Write((' {0,-4} {1,-12}' -f $opts[$i][0], $opts[$i][1]))
+            [Console]::BackgroundColor = [ConsoleColor]::Black; [Console]::ForegroundColor = [ConsoleColor]::Gray
+        } catch { }
+    }
+    try {
+        [Console]::CursorVisible = $false
+        [Console]::BackgroundColor = [ConsoleColor]::Black; [Console]::Clear()
+        [Console]::SetCursorPosition(0, 1); [Console]::ForegroundColor = [ConsoleColor]::Cyan; [Console]::Write($m + '  AltDetectorX')
+        [Console]::SetCursorPosition(0, 3); [Console]::ForegroundColor = [ConsoleColor]::White; [Console]::Write($m + '  Select language / Dil seçin')
+        [Console]::SetCursorPosition(0, 8); [Console]::ForegroundColor = [ConsoleColor]::DarkGray
+        [Console]::Write($m + ('  {0}/{1}  ENTER     E = English     T = Türkçe' -f [char]0x2191, [char]0x2193))
+    } catch { }
+    & $drawOpt 0 ($sel -eq 0); & $drawOpt 1 ($sel -eq 1)
+    while ($true) {
+        $k = $null
+        try { $k = [Console]::ReadKey($true) } catch { return $opts[$sel][0] }
+        $key = [string]$k.Key
+        if ($key -in 'E', 'D1', 'NumPad1') { return 'EN' }
+        if ($key -in 'T', 'D2', 'NumPad2') { return 'TR' }
+        if ($key -in 'Enter', 'Spacebar', 'Escape') { return $opts[$sel][0] }
+        if ($key -in 'UpArrow', 'DownArrow', 'LeftArrow', 'RightArrow', 'Tab', 'W', 'S') {
+            $sel = 1 - $sel
+            & $drawOpt 0 ($sel -eq 0); & $drawOpt 1 ($sel -eq 1)
+        }
+    }
+}
+
+# Uyarı seviyesini ekranda gösterilecek biçime çevirir (iç değerler Türkçe kalır).
+function Get-LevelText([string]$Level) {
+    $t = L $Level
+    if ($script:Lang -eq 'EN') { return $t.ToUpperInvariant() }
+    return $t.ToUpper()
+}
 
 $script:MarginX = 2
 $script:MarginText = ' ' * $script:MarginX
@@ -223,9 +338,9 @@ function Show-Frame([string]$Activity, [string]$Status, [int]$Percent) {
         $top = [Console]::WindowTop
         $el = [DateTime]::Now - $script:ScanStart
         $row = $top + 1
-        Write-At ($row++) ("  AltDetectorX  {0}  {1}  {0}  {2:hh\:mm\:ss}" -f [char]0x00B7, $script:ModeLabel[$Mode], $el) 'Cyan'
+        Write-At ($row++) ("  AltDetectorX  {0}  {1}  {0}  {2:hh\:mm\:ss}" -f [char]0x00B7, (L $script:ModeLabel[$Mode]), $el) 'Cyan'
         Write-At ($row++) ('  ' + ($CH_LINE * [Math]::Max(1, $w - 4))) 'DarkCyan'
-        Write-At ($row++) ("  Aşama {0}/{1}: {2}" -f $script:UiPhaseNo, $script:UiPhaseTotal, $Activity) 'White'
+        Write-At ($row++) ((L '  Aşama {0}/{1}: {2}') -f $script:UiPhaseNo, $script:UiPhaseTotal, $Activity) 'White'
 
         $bw = [Math]::Max(10, [Math]::Min(60, $w - 14))
         if ($Percent -ge 0) {
@@ -244,12 +359,12 @@ function Show-Frame([string]$Activity, [string]$Status, [int]$Percent) {
 
         $secs = [Math]::Max(0.5, $el.TotalSeconds)
         $accColor = 'Gray'; if ($script:UniqueNames.Count -gt 0) { $accColor = 'Magenta' }
-        Write-At ($row++) ("  Bulunan hesap : {0}" -f $script:UniqueNames.Count) $accColor
-        Write-At ($row++) ("  Uyarı         : {0}" -f $script:Alerts.Count) 'Gray'
-        Write-At ($row++) ("  Klasör / log  : {0:N0} / {1:N0}" -f $script:DirCount, $script:Found.Logs.Count) 'Gray'
-        Write-At ($row++) ("  Hız           : {0:N0} klasör/sn, {1} iş parçacığı" -f ($script:DirCount / $secs), $script:Settings.Threads) 'Gray'
+        Write-At ($row++) ((L '  Bulunan hesap : {0}') -f $script:UniqueNames.Count) $accColor
+        Write-At ($row++) ((L '  Uyarı         : {0}') -f $script:Alerts.Count) 'Gray'
+        Write-At ($row++) ((L '  Klasör / log  : {0:N0} / {1:N0}') -f $script:DirCount, $script:Found.Logs.Count) 'Gray'
+        Write-At ($row++) ((L '  Hız           : {0:N0} klasör/sn, {1} iş parçacığı') -f ($script:DirCount / $secs), $script:Settings.Threads) 'Gray'
         Write-At ($row++) ('  ' + ($CH_LINE * [Math]::Max(1, $w - 4))) 'DarkCyan'
-        Write-At ($row++) '  Son taranan yerler:' 'DarkGray'
+        Write-At ($row++) (L '  Son taranan yerler:') 'DarkGray'
 
         $sigRow = $top + $h - 2
         $n = [Math]::Max(1, [Math]::Min(18, $sigRow - $row - 1))
@@ -391,7 +506,7 @@ function Get-LauncherInfo {
         elseif ($launcher -eq '.minecraft') { $launcher = 'Minecraft Launcher (.minecraft)' }
     }
     if ($null -eq $launcher) {
-        $launcher = 'Bilinmeyen konum'
+        $launcher = (L 'Bilinmeyen konum')
         $dir = [IO.Path]::GetDirectoryName($orig)
         if ($dir -match '(?i)^(.*)\\logs(\\.*)?$') { $dir = $Matches[1] }
         $detail = $dir
@@ -402,7 +517,7 @@ function Get-LauncherInfo {
         }
     }
     if ($orig -match '(?i)^[a-z]:\\Users\\([^\\]+)\\' -and $Matches[1] -ne $script:CurrentUser) {
-        $detail = ("[Windows kullanıcısı: $($Matches[1])] $detail").Trim()
+        $detail = (((L '[Windows kullanıcısı: {0}] {1}') -f ($($Matches[1])), ($detail))).Trim()
     }
     foreach ($wr in $script:WslRoots.Keys) {
         if ($orig.StartsWith($wr + '\', [StringComparison]::OrdinalIgnoreCase)) {
@@ -418,7 +533,7 @@ function Get-LauncherInfo {
         foreach ($k in $script:ShadowMap.Keys) { if ($Path.StartsWith($k + '\', [StringComparison]::OrdinalIgnoreCase)) { $shadowLabel = $script:ShadowMap[$k][1] } }
     }
     if ($shadowLabel) { $detail = ("[$shadowLabel] $detail").Trim() }
-    elseif ($orig -ne $Path) { $detail = ("[Çöp kutusundan] $detail").Trim() }
+    elseif ($orig -ne $Path) { $detail = (((L '[Çöp kutusundan] {0}') -f ($detail))).Trim() }
     return @($launcher, $detail)
 }
 
@@ -437,11 +552,11 @@ function Test-Environment {
     } catch { }
     $script:IsAdmin = $isAdmin
     if (-not $isAdmin) {
-        Add-Alert 'Bilgi' 'Yönetici olarak çalıştırılmadı' 'Diğer Windows kullanıcılarının klasörleri ve çöp kutuları okunamayabilir. Tam tarama için PowerShell''i "Yönetici olarak çalıştır" ile açın.'
+        Add-Alert 'Bilgi' (L 'Yönetici olarak çalıştırılmadı') (L 'Diğer Windows kullanıcılarının klasörleri ve çöp kutuları okunamayabilir. Tam tarama için PowerShell''i "Yönetici olarak çalıştır" ile açın.')
     }
 
     if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
-        Add-Alert 'Yüksek' "PowerShell dil modu kısıtlı: $($ExecutionContext.SessionState.LanguageMode)" 'Tarama eksik çalışabilir. Kısıtlı mod bilinçli olarak açılmış olabilir.'
+        Add-Alert 'Yüksek' ((L 'PowerShell dil modu kısıtlı: {0}') -f ($($ExecutionContext.SessionState.LanguageMode))) (L 'Tarama eksik çalışabilir. Kısıtlı mod bilinçli olarak açılmış olabilir.')
     }
 
     $watch = 'Write-Host', 'Write-Progress', 'Get-CimInstance', 'ConvertFrom-Json', 'Get-Item', 'Get-ChildItem', 'Get-Content',
@@ -451,7 +566,7 @@ function Test-Environment {
     foreach ($n in $watch) {
         $cmds = Microsoft.PowerShell.Core\Get-Command -Name $n -CommandType Alias, Function, Filter -ErrorAction SilentlyContinue
         foreach ($c in $cmds) {
-            Add-Alert 'Yüksek' "PowerShell komutu ezilmiş: $n ($($c.CommandType))" 'Bu oturumda bir profil ya da önceden çalıştırılan kod çıktıyı değiştirmeye çalışıyor olabilir. Bu script modül adıyla çağrı yaptığı için etkilenmez; yine de -NoProfile ile tekrar çalıştırın.'
+            Add-Alert 'Yüksek' ((L 'PowerShell komutu ezilmiş: {0} ({1})') -f ($n), ($($c.CommandType))) (L 'Bu oturumda bir profil ya da önceden çalıştırılan kod çıktıyı değiştirmeye çalışıyor olabilir. Bu script modül adıyla çağrı yaptığı için etkilenmez; yine de -NoProfile ile tekrar çalıştırın.')
         }
     }
 
@@ -465,7 +580,7 @@ function Test-Environment {
             try { $txt = [IO.File]::ReadAllText($p) } catch { }
             if ($txt -match '(?i)(function\s+(Write-Host|Write-Progress|Out-\w+|Get-ChildItem|Get-Content)|Set-Alias|New-Alias|Remove-Item|minecraft|Setting user)') { $lvl = 'Yüksek' }
             elseif ((([DateTime]::Now) - $fi.LastWriteTime).TotalDays -lt 7) { $lvl = 'Orta' }
-            Add-Alert $lvl 'PowerShell profil dosyası mevcut' "$p (son değişiklik: $($fi.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))). Script'i -NoProfile ile çalıştırmanız önerilir."
+            Add-Alert $lvl (L 'PowerShell profil dosyası mevcut') ((L '{0} (son değişiklik: {1}). Script''i -NoProfile ile çalıştırmanız önerilir.') -f ($p), ($($fi.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))))
         }
     }
 }
@@ -518,7 +633,7 @@ function Test-IsSelfReport([string]$Path) {
         if ((Microsoft.PowerShell.Utility\New-Object IO.FileInfo($Path)).Length -gt 2MB) { return $false }
         $txt = [IO.File]::ReadAllText($Path)
     } catch { return $false }
-    return ($txt -match '(?m)^\s*#\s*AltDetectorX\b' -and $txt.Contains((Get-Sig)) -and $txt -match '(?m)^\s*#\s*HESAPLAR\b')
+    return ($txt -match '(?m)^\s*#\s*AltDetectorX\b' -and $txt.Contains((Get-Sig)) -and $txt -match '(?m)^\s*#\s*(HESAPLAR|ACCOUNTS)\b')
 }
 
 function Register-File([IO.FileInfo]$Fi) {
@@ -551,7 +666,7 @@ function Register-File([IO.FileInfo]$Fi) {
         $script:Found.AltStores.Add([pscustomobject]@{ File = $Fi; Kind = 'Wurst Client' }); return
     }
     if ($lower -eq 'account-switcher.json' -and $parent -eq 'config') {
-        $script:Found.AltStores.Add([pscustomobject]@{ File = $Fi; Kind = 'Keychain (hesap değiştirici mod)' }); return
+        $script:Found.AltStores.Add([pscustomobject]@{ File = $Fi; Kind = (L 'Keychain (hesap değiştirici mod)') }); return
     }
 
     if ($lower -match '^(instance\.cfg|prismlauncher\.cfg|multimc\.cfg|polymc\.cfg|pollymc\.cfg|fjordlauncher\.cfg|elyprismlauncher\.cfg|freesmlauncher\.cfg|ultimmc\.cfg|launcher_profiles.*\.json|settings\.json)$' -and $full -match $script:RelevantPathRx) {
@@ -584,7 +699,7 @@ function Invoke-Walk {
                 $tg = $null
                 try { $tg = @((Microsoft.PowerShell.Management\Get-Item -LiteralPath $dir -Force).Target) | Microsoft.PowerShell.Utility\Select-Object -First 1 } catch { }
                 if (-not $tg) {
-                    Add-Alert 'Orta' 'Minecraft ile ilgili klasör bir bağlantı (junction/symlink)' "$dir -> ?  (hedef okunamadı)"
+                    Add-Alert 'Orta' (L 'Minecraft ile ilgili klasör bir bağlantı (junction/symlink)') ((L '{0} -> ?  (hedef okunamadı)') -f ($dir))
                     continue
                 }
                 if ($tg) {
@@ -593,9 +708,9 @@ function Invoke-Walk {
                     if (-not [IO.Path]::IsPathRooted($tg)) { $tg = [IO.Path]::GetFullPath((Microsoft.PowerShell.Management\Join-Path ([IO.Path]::GetDirectoryName($dir)) $tg)) }
                     $lname = [IO.Path]::GetFileName($dir.TrimEnd('\'))
                     if ($lname -ieq 'logs') {
-                        Add-Alert 'Yüksek' 'logs klasörü bir bağlantı (junction/symlink)' "$dir -> $tg  (loglar başka yere yönlendirilmiş ya da gizlenmiş olabilir)"
+                        Add-Alert 'Yüksek' (L 'logs klasörü bir bağlantı (junction/symlink)') ((L '{0} -> {1}  (loglar başka yere yönlendirilmiş ya da gizlenmiş olabilir)') -f ($dir), ($tg))
                     } else {
-                        Add-Alert 'Orta' 'Minecraft ile ilgili klasör bir bağlantı (junction/symlink)' "$dir -> $tg"
+                        Add-Alert 'Orta' (L 'Minecraft ile ilgili klasör bir bağlantı (junction/symlink)') "$dir -> $tg"
                     }
                     if (-not [IO.Directory]::Exists($tg)) { continue }
                     $dir = $tg.TrimEnd('\')
@@ -607,7 +722,7 @@ function Invoke-Walk {
         if ([Math]::Abs([Environment]::TickCount - $script:LastTick) -ge 100) {
             $pct = -1
             if ($script:WalkTotal -gt 0) { $pct = [int](100 * $script:WalkDone / $script:WalkTotal) }
-            Show-Progress -Status ("Konum {0}/{1}:  {2}" -f [Math]::Min($script:WalkDone + 1, $script:WalkTotal), $script:WalkTotal, $script:WalkRoot) -Percent $pct -Recent $dir
+            Show-Progress -Status ((L 'Konum {0}/{1}:  {2}') -f [Math]::Min($script:WalkDone + 1, $script:WalkTotal), $script:WalkTotal, $script:WalkRoot) -Percent $pct -Recent $dir
         }
 
         $infos = $null
@@ -760,7 +875,7 @@ function Invoke-RecycleScan {
         $sids = @()
         try { $sids = [IO.Directory]::GetDirectories($bin) } catch { continue }
         foreach ($sid in $sids) {
-            Show-Progress -Status "Silinmiş dosyalar aranıyor..." -Recent $sid
+            Show-Progress -Status (L 'Silinmiş dosyalar aranıyor...') -Recent $sid
             $ifiles = @()
             try { $ifiles = [IO.Directory]::GetFiles($sid, '$I*') } catch { $script:Denied++; continue }
             foreach ($i in $ifiles) {
@@ -775,7 +890,7 @@ function Invoke-RecycleScan {
                 $lvl = 'Orta'
                 if ($orig -match '(?i)(\\logs(\\|$)|\.log(\.gz)?$|_IAS_ACCOUNTS|accounts|launcher_profiles|\.minecraft$|lunarclient$)') { $lvl = 'Yüksek' }
                 if ($count -le 40) {
-                    Add-Alert $lvl 'Çöp kutusunda silinmiş Minecraft dosyası' "$orig  (silinme: $($when.ToString('yyyy-MM-dd HH:mm')))"
+                    Add-Alert $lvl (L 'Çöp kutusunda silinmiş Minecraft dosyası') ((L '{0}  (silinme: {1})') -f ($orig), ($($when.ToString('yyyy-MM-dd HH:mm'))))
                 }
                 $script:RecycleMap[$rPath] = $orig
                 if ([IO.Directory]::Exists($rPath)) { Invoke-Walk $rPath -1 }
@@ -788,7 +903,7 @@ function Invoke-RecycleScan {
             }
         }
     }
-    if ($count -gt 40) { Add-Alert 'Orta' "Çöp kutusunda toplam $count ilgili silinmiş öğe var" 'Sadece ilk 40 tanesi listelendi.' }
+    if ($count -gt 40) { Add-Alert 'Orta' ((L 'Çöp kutusunda toplam {0} ilgili silinmiş öğe var') -f ($count)) (L 'Sadece ilk 40 tanesi listelendi.') }
 }
 
 $script:ShadowMap = @{}
@@ -809,10 +924,10 @@ function Split-CsvLine([string]$Line) {
 
 function Invoke-ShadowScan {
     $shadows = @()
-    Show-Progress -Status 'Gölge kopyalar (geri yükleme noktaları) aranıyor...' -Force
+    Show-Progress -Status (L 'Gölge kopyalar (geri yükleme noktaları) aranıyor...') -Force
     try { $shadows = @(CimCmdlets\Get-CimInstance Win32_ShadowCopy -ErrorAction Stop -OperationTimeoutSec 60) } catch { return }
     if ($shadows.Count -eq 0) {
-        Add-Alert 'Bilgi' 'Gölge kopya (geri yükleme noktası) yok' 'Eski dosya sürümlerine bakılamadı. Gölge kopyaların hepsinin silinmiş olması da bir temizlik işareti olabilir.'
+        Add-Alert 'Bilgi' (L 'Gölge kopya (geri yükleme noktası) yok') (L 'Eski dosya sürümlerine bakılamadı. Gölge kopyaların hepsinin silinmiş olması da bir temizlik işareti olabilir.')
         return
     }
     $vols = @{}
@@ -824,7 +939,7 @@ function Invoke-ShadowScan {
         $letter = $vols[[string]$sh.VolumeName]
         if (-not $letter) { continue }
         $dev = ([string]$sh.DeviceObject).TrimEnd('\')
-        $label = "Gölge kopya {0:yyyy-MM-dd HH:mm}" -f $sh.InstallDate
+        $label = (L 'Gölge kopya {0:yyyy-MM-dd HH:mm}') -f $sh.InstallDate
         $script:ShadowMap[$dev] = @($letter, $label)
         foreach ($p in $profiles) {
             if (-not $p.StartsWith($letter + '\', [StringComparison]::OrdinalIgnoreCase)) { continue }
@@ -832,7 +947,7 @@ function Invoke-ShadowScan {
             foreach ($x in 'Desktop', 'Downloads', 'Documents') { $plan.Add(@(($dev + (Microsoft.PowerShell.Management\Join-Path $p $x).Substring(2)), 4)) }
         }
     }
-    Add-Alert 'Bilgi' "Gölge kopyalar tarandı: $($script:ShadowMap.Count) adet" (($script:ShadowMap.Values | Microsoft.PowerShell.Core\ForEach-Object { $_[1] }) -join ', ')
+    Add-Alert 'Bilgi' ((L 'Gölge kopyalar tarandı: {0} adet') -f ($($script:ShadowMap.Count))) (($script:ShadowMap.Values | Microsoft.PowerShell.Core\ForEach-Object { $_[1] }) -join ', ')
     $script:WalkTotal = $plan.Count; $script:WalkDone = 0
     foreach ($w in $plan) {
         $script:WalkRoot = [string]$w[0]
@@ -853,10 +968,10 @@ function Test-ShadowDeleted {
         if ($count -le 40) {
             $label = ''
             foreach ($k in $script:ShadowMap.Keys) { if ($a.Path.StartsWith($k, [StringComparison]::OrdinalIgnoreCase)) { $label = $script:ShadowMap[$k][1] } }
-            Add-Alert 'Yüksek' 'Eski kopyada var, şu an silinmiş' "$now  ($label, içinde: $($a.Name))"
+            Add-Alert 'Yüksek' (L 'Eski kopyada var, şu an silinmiş') ((L '{0}  ({1}, içinde: {2})') -f ($now), ($label), ($($a.Name)))
         }
     }
-    if ($count -gt 40) { Add-Alert 'Yüksek' "Eski kopyalarda olup silinmiş toplam $count dosya" 'Sadece ilk 40 tanesi listelendi.' }
+    if ($count -gt 40) { Add-Alert 'Yüksek' ((L 'Eski kopyalarda olup silinmiş toplam {0} dosya') -f ($count)) (L 'Sadece ilk 40 tanesi listelendi.') }
 }
 
 function Invoke-UsnScan {
@@ -872,7 +987,7 @@ function Invoke-UsnScan {
     $drives = @([IO.DriveInfo]::GetDrives() | Microsoft.PowerShell.Core\Where-Object { $_.IsReady -and $_.DriveType -eq [IO.DriveType]::Fixed -and $_.DriveFormat -eq 'NTFS' })
     foreach ($drv in $drives) {
         $letter = $drv.Name.Substring(0, 2)
-        Show-Progress -Status "Silinmiş dosyalar aranıyor..." -Recent $letter -Force
+        Show-Progress -Status (L 'Silinmiş dosyalar aranıyor...') -Recent $letter -Force
 
         $q = Invoke-Native $fsutil "usn queryjournal $letter" 20000 $script:OemEnc
         if ($q -and $q -match '0x([0-9a-fA-F]{16})') {
@@ -883,20 +998,20 @@ function Invoke-UsnScan {
                     $afterInstall = $true
                     if ($install) { $afterInstall = (($created - $install).TotalDays -gt 2) }
                     if ($age -lt 14 -and $afterInstall) {
-                        Add-Alert 'Orta' "USN günlüğü yakın zamanda yeniden oluşturulmuş ($letter)" ("Oluşturulma: {0:yyyy-MM-dd HH:mm}. Daha önceki dosya silme kayıtları yok; günlük bilinçli olarak silinmiş olabilir." -f $created)
+                        Add-Alert 'Orta' ((L 'USN günlüğü yakın zamanda yeniden oluşturulmuş ({0})') -f ($letter)) ((L 'Oluşturulma: {0:yyyy-MM-dd HH:mm}. Daha önceki dosya silme kayıtları yok; günlük bilinçli olarak silinmiş olabilir.') -f $created)
                     }
                 }
             } catch { }
         } elseif ($null -ne $q) {
-            Add-Alert 'Orta' "USN günlüğü okunamadı ya da kapalı ($letter)" 'Dosya değişiklik kaydı kapatılmış olabilir; silinen dosyalar bu yöntemle kontrol edilemedi.'
+            Add-Alert 'Orta' ((L 'USN günlüğü okunamadı ya da kapalı ({0})') -f ($letter)) (L 'Dosya değişiklik kaydı kapatılmış olabilir; silinen dosyalar bu yöntemle kontrol edilemedi.')
             continue
         }
 
-        Show-Progress -Status "USN günlüğü okunuyor ($letter), birkaç dakika sürebilir..." -Recent "$letter\ (USN günlüğü)" -Force
+        Show-Progress -Status ((L 'USN günlüğü okunuyor ({0}), birkaç dakika sürebilir...') -f ($letter)) -Recent ((L '{0}\ (USN günlüğü)') -f ($letter)) -Force
         $args2 = "/c `"`"$fsutil`" usn readjournal $letter csv | findstr /i /c:`".log.gz`" /c:`"latest.log`" /c:`"account`" /c:`"launcher_profiles`" /c:`"do_not_send`" /c:`"ias.json`" /c:`"hmcl.json`" /c:`"alts.encrypted`"`""
         $out = Invoke-Native $env:ComSpec $args2 300000 $script:OemEnc
         if (-not $out) { continue }
-        Show-Progress -Status "USN kayıtları inceleniyor ($letter)..." -Force
+        Show-Progress -Status ((L 'USN kayıtları inceleniyor ({0})...') -f ($letter)) -Force
         foreach ($line in ($out -split "`r?`n")) {
             Update-UiTick
             if (-not $line) { continue }
@@ -927,13 +1042,13 @@ function Invoke-UsnScan {
             if ($null -eq $ts) { $ts = '?' }
             $parent = $ids[1]
             $key = "$letter|$parent|$name"
-            $what = 'silindi'; if (-not $isDel) { $what = 'adı değiştirildi' }
+            $what = (L 'silindi'); if (-not $isDel) { $what = (L 'adı değiştirildi') }
             $found[$key] = @($letter, $parent, $name, $ts, $what)
         }
     }
 
     $count = 0
-    if ($found.Count -gt 0) { Show-Progress -Status "Silinen dosyaların konumları bulunuyor ($($found.Count) kayıt)..." -Force }
+    if ($found.Count -gt 0) { Show-Progress -Status ((L 'Silinen dosyaların konumları bulunuyor ({0} kayıt)...') -f ($($found.Count))) -Force }
     foreach ($e in $found.Values) {
         Update-UiTick
         $letter = $e[0]; $parent = $e[1]; $name = $e[2]; $ts = $e[3]; $what = $e[4]
@@ -955,17 +1070,17 @@ function Invoke-UsnScan {
             $where = Microsoft.PowerShell.Management\Join-Path $dir $name
         } else {
             if (-not $strong -and $name -notmatch '\.log\.gz$') { continue }
-            $where = "$name  (konumu bulunamadı, klasörü de silinmiş olabilir)"
+            $where = ((L '{0}  (konumu bulunamadı, klasörü de silinmiş olabilir)') -f ($name))
         }
         $when = $ts
         try { $when = ([datetime]::Parse($ts, [Globalization.CultureInfo]::CurrentCulture)).ToString('yyyy-MM-dd HH:mm') } catch { }
         $count++
         if ($count -le 40) {
             $lvl = 'Orta'; if ($strong -or ($dir -and $dir -match $script:RelevantPathRx)) { $lvl = 'Yüksek' }
-            Add-Alert $lvl "USN günlüğü: Minecraft dosyası $what" "$where  ($when)"
+            Add-Alert $lvl ((L 'USN günlüğü: Minecraft dosyası {0}') -f ($what)) "$where  ($when)"
         }
     }
-    if ($count -gt 40) { Add-Alert 'Yüksek' "USN günlüğünde toplam $count silinmiş/adı değişmiş Minecraft dosyası" 'Sadece ilk 40 tanesi listelendi.' }
+    if ($count -gt 40) { Add-Alert 'Yüksek' ((L 'USN günlüğünde toplam {0} silinmiş/adı değişmiş Minecraft dosyası') -f ($count)) (L 'Sadece ilk 40 tanesi listelendi.') }
 }
 
 function Test-WipeTools {
@@ -973,36 +1088,36 @@ function Test-WipeTools {
     $pfMode = $null
     try { $pfMode = (Microsoft.PowerShell.Management\Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters' -ErrorAction Stop).EnablePrefetcher } catch { }
     if ($null -ne $pfMode -and [int]$pfMode -eq 0) {
-        Add-Alert 'Orta' 'Prefetch kapatılmış' 'EnablePrefetcher = 0: hangi programların çalıştırıldığı kaydedilmiyor, temizleme araçları bu yöntemle kontrol edilemedi. Bilinçli olarak kapatılmış olabilir.'
+        Add-Alert 'Orta' (L 'Prefetch kapatılmış') (L 'EnablePrefetcher = 0: hangi programların çalıştırıldığı kaydedilmiyor, temizleme araçları bu yöntemle kontrol edilemedi. Bilinçli olarak kapatılmış olabilir.')
     }
     $files = @()
     try { $files = ([IO.DirectoryInfo]$pf).GetFiles('*.pf') } catch {
-        Add-Alert 'Orta' 'Prefetch klasörü okunamadı' "$pf  (klasör silinmiş ya da erişim engellenmiş olabilir)"
+        Add-Alert 'Orta' (L 'Prefetch klasörü okunamadı') ((L '{0}  (klasör silinmiş ya da erişim engellenmiş olabilir)') -f ($pf))
         return
     }
     if ($files.Count -eq 0) {
-        Add-Alert 'Orta' 'Prefetch klasörü boş' "$pf  (yakın zamanda temizlenmiş ya da Prefetch kapatılmış olabilir)"
+        Add-Alert 'Orta' (L 'Prefetch klasörü boş') ((L '{0}  (yakın zamanda temizlenmiş ya da Prefetch kapatılmış olabilir)') -f ($pf))
         return
     }
     # 3. alan: $true = temizleme / iz silme aracı, $false = sadece inceleme / sistem aracı (tek başına şüpheli değil)
     $tools = @(
         @('^CCLEANER', 'CCleaner', $true), @('^BLEACHBIT', 'BleachBit', $true), @('^PRIVAZER', 'PrivaZer', $true), @('^ERASER', 'Eraser', $true),
         @('^SDELETE', 'SDelete', $true), @('^WISEDISKCLEANER|^WISECLEANER', 'Wise Disk Cleaner', $true), @('^GLARY|^INTEGRATOR', 'Glary Utilities', $true),
-        @('^HARDWIPE', 'Hardwipe', $true), @('^FILESHREDDER', 'File Shredder', $true), @('^CIPHER\.EXE', 'cipher (boş alan silme)', $true),
+        @('^HARDWIPE', 'Hardwipe', $true), @('^FILESHREDDER', 'File Shredder', $true), @('^CIPHER\.EXE', (L 'cipher (boş alan silme)'), $true),
         @('^REVOUNIN', 'Revo Uninstaller', $true),
-        @('^EVERYTHING', 'Everything (dosya arama)', $false), @('^LASTACTIVITYVIEW', 'LastActivityView', $false), @('^USBDEVIEW', 'USBDeview', $false),
+        @('^EVERYTHING', (L 'Everything (dosya arama)'), $false), @('^LASTACTIVITYVIEW', 'LastActivityView', $false), @('^USBDEVIEW', 'USBDeview', $false),
         @('^PROCESSHACKER|^SYSTEMINFORMER', 'Process Hacker / System Informer', $false)
     )
     foreach ($t in $tools) {
         $hit = $files | Microsoft.PowerShell.Core\Where-Object { $_.Name -match "(?i)$($t[0])" } | Microsoft.PowerShell.Utility\Sort-Object LastWriteTime -Descending | Microsoft.PowerShell.Utility\Select-Object -First 1
         if (-not $hit) { continue }
         $days = ([DateTime]::Now - $hit.LastWriteTime).TotalDays
-        $when = ("Son çalıştırma: {0:yyyy-MM-dd HH:mm}" -f $hit.LastWriteTime)
+        $when = ((L 'Son çalıştırma: {0:yyyy-MM-dd HH:mm}') -f $hit.LastWriteTime)
         if ($t[2]) {
             $lvl = 'Bilgi'; if ($days -lt 30) { $lvl = 'Orta' }
-            Add-Alert $lvl "Temizleme / iz silme aracı çalıştırılmış: $($t[1])" $when
+            Add-Alert $lvl ((L 'Temizleme / iz silme aracı çalıştırılmış: {0}') -f ($($t[1]))) $when
         } else {
-            Add-Alert 'Bilgi' "İnceleme / sistem aracı çalıştırılmış: $($t[1])" $when
+            Add-Alert 'Bilgi' ((L 'İnceleme / sistem aracı çalıştırılmış: {0}') -f ($($t[1]))) $when
         }
     }
 }
@@ -1010,12 +1125,12 @@ function Test-WipeTools {
 function Invoke-DeletedScan {
     Invoke-RecycleScan
     if (-not $script:IsAdmin) {
-        Add-Alert 'Bilgi' 'Gelişmiş silinmiş dosya kontrolleri atlandı' 'USN günlüğü, gölge kopyalar ve Prefetch kontrolleri için yönetici yetkisi gerekiyor.'
+        Add-Alert 'Bilgi' (L 'Gelişmiş silinmiş dosya kontrolleri atlandı') (L 'USN günlüğü, gölge kopyalar ve Prefetch kontrolleri için yönetici yetkisi gerekiyor.')
         return
     }
-    Show-Progress -Status 'Silinmiş dosyalar aranıyor...' -Force
+    Show-Progress -Status (L 'Silinmiş dosyalar aranıyor...') -Force
     Test-WipeTools
-    Show-Progress -Status 'Silinmiş dosyalar aranıyor...' -Force
+    Show-Progress -Status (L 'Silinmiş dosyalar aranıyor...') -Force
     Invoke-ShadowScan
     Invoke-UsnScan
 }
@@ -1125,7 +1240,7 @@ function Invoke-LogParse {
                 }
             }
             $pct = [int](100 * $done / [Math]::Max(1, $total))
-            Show-Progress -Status ("{0:N0} / {1:N0} dosya" -f $done, $total) -Percent $pct -Recent $lastPath
+            Show-Progress -Status ((L '{0:N0} / {1:N0} dosya') -f $done, $total) -Percent $pct -Recent $lastPath
             if (-not $progressed) { Microsoft.PowerShell.Utility\Start-Sleep -Milliseconds 50 }
         }
     } finally {
@@ -1186,7 +1301,7 @@ function Invoke-AccountFiles {
     $i = 0
     foreach ($fi in $script:Found.Accounts) {
         $i++
-        Show-Progress -Status "$i / $($script:Found.Accounts.Count) dosya" -Percent ([int](100 * $i / $script:Found.Accounts.Count)) -Recent $fi.FullName
+        Show-Progress -Status ((L '{0} / {1} dosya') -f ($i), ($($script:Found.Accounts.Count))) -Percent ([int](100 * $i / $script:Found.Accounts.Count)) -Recent $fi.FullName
         $txt = $null
         try {
             $fs = [IO.File]::Open($fi.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]'ReadWrite, Delete')
@@ -1215,6 +1330,7 @@ function Invoke-AccountFiles {
         $hint = @()
         if ($fi.Name -match '(?i)tlauncher') { $hint = @('tlauncher') }
         $info = Get-LauncherInfo $fi.FullName $hint
+        # Kaynak etiketleri dahili (Türkçe) tutulur; ekranda Get-ShortSource çevirir.
         $src = "hesap dosyası ($($fi.Name))"
         if ($fi.FullName -match '(?i)\\LiquidBounce\\[^\\]+$') { $src = 'LiquidBounce alt yöneticisi' }
         foreach ($n in ($names | Microsoft.PowerShell.Utility\Select-Object -Unique)) {
@@ -1248,11 +1364,11 @@ function Read-IasStore([string]$Path) {
         for ($i = 0; $i -lt $count; $i++) {
             $type = Read-JavaUtf $r
             switch ($type) {
-                'ias:offline_v1' { $names.Add(@((Read-JavaUtf $r), 'çevrimdışı')) }
+                'ias:offline_v1' { $names.Add(@((Read-JavaUtf $r), (L 'çevrimdışı'))) }
                 'ias:offline_v2' {
                     $n = Read-JavaUtf $r
                     if ($r.ReadByte() -ne 0) { [void]$r.ReadBytes(16) }
-                    $names.Add(@($n, 'çevrimdışı'))
+                    $names.Add(@($n, (L 'çevrimdışı')))
                 }
                 'ias:microsoft_v1' {
                     [void]$r.ReadByte(); [void]$r.ReadBytes(16)
@@ -1276,13 +1392,13 @@ function Invoke-Ias {
         $script:IasUnknownType = $null
         try { $list = Read-IasStore $fi.FullName } catch { }
         if ($null -eq $list) {
-            Add-Alert 'Orta' 'IAS hesap dosyası okunamadı' "$($fi.FullName) (bozuk ya da değiştirilmiş olabilir)"
+            Add-Alert 'Orta' (L 'IAS hesap dosyası okunamadı') ((L '{0} (bozuk ya da değiştirilmiş olabilir)') -f ($($fi.FullName)))
             continue
         }
         foreach ($x in $list) { Add-Account $x[0] $info[0] $info[1] "IAS kayıtlı hesap ($($x[1]))" $fi.FullName $fi.LastWriteTime }
         if ($script:IasUnknownType) {
-            Add-Alert 'Orta' 'IAS hesap dosyası tam okunamadı' "$($fi.FullName)  (tanınmayan hesap türü: '$($script:IasUnknownType)'; $($list.Count) hesap okundu, sonrakiler atlandı. Yeni bir IAS sürümü olabilir.)"
-        } elseif ($list.Count -eq 0) { Add-Alert 'Bilgi' 'IAS hesap dosyası boş' $fi.FullName }
+            Add-Alert 'Orta' (L 'IAS hesap dosyası tam okunamadı') ((L '{0}  (tanınmayan hesap türü: ''{1}''; {2} hesap okundu, sonrakiler atlandı. Yeni bir IAS sürümü olabilir.)') -f ($($fi.FullName)), ($($script:IasUnknownType)), ($($list.Count)))
+        } elseif ($list.Count -eq 0) { Add-Alert 'Bilgi' (L 'IAS hesap dosyası boş') $fi.FullName }
     }
     foreach ($fi in $script:Found.IasJson) {
 
@@ -1297,13 +1413,13 @@ function Invoke-Ias {
     foreach ($d in $script:Found.IasDirs) {
         $store = Microsoft.PowerShell.Management\Join-Path $d '.hidden\accounts_v1.do_not_send_to_anyone'
         if (-not [IO.File]::Exists($store)) {
-            Add-Alert 'Orta' 'IAS klasörü var ama hesap dosyası yok' "$d  (IAS kullanılmış, hesap dosyası silinmiş olabilir)"
+            Add-Alert 'Orta' (L 'IAS klasörü var ama hesap dosyası yok') ((L '{0}  (IAS kullanılmış, hesap dosyası silinmiş olabilir)') -f ($d))
         }
     }
     foreach ($fi in $script:Found.Mods) {
         $info = Get-LauncherInfo $fi.FullName
         $where = $info[0]; if ($info[1]) { $where += " › $($info[1])" }
-        Add-Alert 'Orta' 'Hesap değiştirici mod yüklü' "$($fi.Name)  [$where]  (oyun içinden hesap değiştirmeye izin verir)"
+        Add-Alert 'Orta' (L 'Hesap değiştirici mod yüklü') ((L '{0}  [{1}]  (oyun içinden hesap değiştirmeye izin verir)') -f ($($fi.Name)), ($where))
     }
 }
 
@@ -1347,14 +1463,14 @@ function Invoke-AltManagers {
             $names = @($raw | Microsoft.PowerShell.Core\Where-Object { $_ -match $script:McNameRx } | Microsoft.PowerShell.Utility\Select-Object -Unique)
         } catch { }
         foreach ($n in $names) { Add-Account $n $info[0] $info[1] 'Meteor Client alt yöneticisi' $fi.FullName $fi.LastWriteTime }
-        Add-Alert 'Yüksek' 'Hile istemcisi alt yöneticisi: Meteor Client' ("{0}  [{1}]  ({2} hesap adı okundu)" -f $fi.FullName, $where, $names.Count)
+        Add-Alert 'Yüksek' (L 'Hile istemcisi alt yöneticisi: Meteor Client') ((L '{0}  [{1}]  ({2} hesap adı okundu)') -f $fi.FullName, $where, $names.Count)
     }
     foreach ($s in $script:Found.AltStores) {
         $info = Get-LauncherInfo $s.File.FullName
         $where = $info[0]; if ($info[1]) { $where += " › $($info[1])" }
-        $lvl = 'Orta'; $title = "Hesap değiştirici kayıtları: $($s.Kind)"
-        if ($s.Kind -like 'Wurst*') { $lvl = 'Yüksek'; $title = "Hile istemcisi alt yöneticisi: $($s.Kind)" }
-        Add-Alert $lvl $title ("{0}  [{1}]  (dosya şifreli, hesap adları okunamıyor; son değişiklik: {2:yyyy-MM-dd HH:mm})" -f $s.File.FullName, $where, $s.File.LastWriteTime)
+        $lvl = 'Orta'; $title = ((L 'Hesap değiştirici kayıtları: {0}') -f ($($s.Kind)))
+        if ($s.Kind -like 'Wurst*') { $lvl = 'Yüksek'; $title = ((L 'Hile istemcisi alt yöneticisi: {0}') -f ($($s.Kind))) }
+        Add-Alert $lvl $title ((L '{0}  [{1}]  (dosya şifreli, hesap adları okunamıyor; son değişiklik: {2:yyyy-MM-dd HH:mm})') -f $s.File.FullName, $where, $s.File.LastWriteTime)
     }
 }
 
@@ -1369,19 +1485,19 @@ function Test-LogIntegrity {
         $logs = Microsoft.PowerShell.Management\Join-Path $game 'logs'
 
         if (-not [IO.Directory]::Exists($logs)) {
-            Add-Alert 'Orta' 'Oyun klasöründe logs klasörü yok' "$display  (oyun oynanmış ama loglar yok: silinmiş olabilir)"
+            Add-Alert 'Orta' (L 'Oyun klasöründe logs klasörü yok') ((L '{0}  (oyun oynanmış ama loglar yok: silinmiş olabilir)') -f ($display))
             continue
         }
         $ldi = Microsoft.PowerShell.Utility\New-Object IO.DirectoryInfo($logs)
         $isWsl = $game.StartsWith('\\wsl', [StringComparison]::OrdinalIgnoreCase)
         if (-not $isWsl -and ($ldi.Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
-            Add-Alert 'Orta' 'logs klasörü salt okunur' "$logs"
+            Add-Alert 'Orta' (L 'logs klasörü salt okunur') "$logs"
         }
         if (-not $isWsl) { try {
             $acl = Microsoft.PowerShell.Security\Get-Acl -LiteralPath $logs
             foreach ($rule in $acl.Access) {
                 if ($rule.AccessControlType -eq 'Deny' -and ([int]$rule.FileSystemRights -band 0x2) -ne 0) {
-                    Add-Alert 'Yüksek' 'logs klasörüne yazma engellenmiş (ACL Deny)' "$logs  ($($rule.IdentityReference)): oyunun log yazması bilinçli olarak engellenmiş"
+                    Add-Alert 'Yüksek' (L 'logs klasörüne yazma engellenmiş (ACL Deny)') ((L '{0}  ({1}): oyunun log yazması bilinçli olarak engellenmiş') -f ($logs), ($($rule.IdentityReference)))
                     break
                 }
             }
@@ -1390,16 +1506,16 @@ function Test-LogIntegrity {
         $files = @()
         try { $files = $ldi.GetFiles() } catch { }
         if ($files.Count -eq 0) {
-            Add-Alert 'Orta' 'logs klasörü boş' "$logs"
+            Add-Alert 'Orta' (L 'logs klasörü boş') "$logs"
             continue
         }
         $latest = $files | Microsoft.PowerShell.Core\Where-Object { $_.Name -ieq 'latest.log' } | Microsoft.PowerShell.Utility\Select-Object -First 1
         if ($latest -and $latest.Length -eq 0) {
-            Add-Alert 'Orta' 'latest.log boş (0 bayt)' "$($latest.FullName)  (oyun şu an açılıyor olabilir ya da log temizlenmiş olabilir)"
+            Add-Alert 'Orta' (L 'latest.log boş (0 bayt)') ((L '{0}  (oyun şu an açılıyor olabilir ya da log temizlenmiş olabilir)') -f ($($latest.FullName)))
         }
         foreach ($f in $files) {
             if (-not $isWsl -and ([int]$f.Attributes -band 0x6) -ne 0) {
-                Add-Alert 'Orta' 'Gizli/sistem öznitelikli log dosyası' $f.FullName
+                Add-Alert 'Orta' (L 'Gizli/sistem öznitelikli log dosyası') $f.FullName
             }
         }
         $newest = Get-MaxDate $files
@@ -1409,7 +1525,7 @@ function Test-LogIntegrity {
             if ([IO.File]::Exists($mp)) { $t = [IO.File]::GetLastWriteTime($mp); if ($t -gt $lastPlay) { $lastPlay = $t } }
         }
         if ($newest -and ($lastPlay - $newest).TotalHours -gt 24) {
-            Add-Alert 'Orta' 'Loglar, oyunun son kullanımından eski' ("{0}  (son log: {1:yyyy-MM-dd HH:mm}, son oyun etkinliği: {2:yyyy-MM-dd HH:mm}); loglar silinmiş ya da log yazımı kapatılmış olabilir" -f $display, $newest, $lastPlay)
+            Add-Alert 'Orta' (L 'Loglar, oyunun son kullanımından eski') ((L '{0}  (son log: {1:yyyy-MM-dd HH:mm}, son oyun etkinliği: {2:yyyy-MM-dd HH:mm}); loglar silinmiş ya da log yazımı kapatılmış olabilir') -f $display, $newest, $lastPlay)
         }
     }
 
@@ -1418,7 +1534,7 @@ function Test-LogIntegrity {
         try {
             $x = [IO.File]::ReadAllText($fi.FullName)
             if ($x -match '(?i)level\s*=\s*"off"' -or $x -notmatch '(?i)logs/latest\.log') {
-                Add-Alert 'Yüksek' 'Minecraft log yapılandırması değiştirilmiş' "$($fi.FullName)  (latest.log yazımı kapatılmış ya da yönlendirilmiş olabilir)"
+                Add-Alert 'Yüksek' (L 'Minecraft log yapılandırması değiştirilmiş') ((L '{0}  (latest.log yazımı kapatılmış ya da yönlendirilmiş olabilir)') -f ($($fi.FullName)))
             }
         } catch { }
     }
@@ -1428,7 +1544,7 @@ function Test-LogIntegrity {
         try {
             $x = [IO.File]::ReadAllText($fi.FullName)
             if ($x -match '(?i)-Dlog4j2?\.(configurationFile|level|rootLogger\w*)|log4j2?\.configurationFile') {
-                Add-Alert 'Yüksek' 'Launcher ayarlarında özel log4j parametresi' "$($fi.FullName)  (JVM argümanlarıyla oyun logu kapatılmış olabilir)"
+                Add-Alert 'Yüksek' (L 'Launcher ayarlarında özel log4j parametresi') ((L '{0}  (JVM argümanlarıyla oyun logu kapatılmış olabilir)') -f ($($fi.FullName)))
             }
         } catch { }
     }
@@ -1454,11 +1570,11 @@ function Invoke-ProcessScan {
         if ($cmd -match '(?i)-Dlog4j2?\.configurationFile=("?)([^\s"]+)') {
             $cfg = $Matches[2]
             if ($cfg -notmatch '(?i)[\\/]log_configs[\\/]client-1\.\d+\.xml$') {
-                Add-Alert 'Orta' 'Çalışan oyunda standart dışı log4j yapılandırması' "PID $($p.ProcessId): $cfg"
+                Add-Alert 'Orta' (L 'Çalışan oyunda standart dışı log4j yapılandırması') "PID $($p.ProcessId): $cfg"
             }
         }
         if ($cmd -match '(?i)-Dlog4j2?\.level=off|-Dlog4j2?\.rootLogger\w*=off') {
-            Add-Alert 'Yüksek' 'Çalışan oyunda loglama kapatılmış' "PID $($p.ProcessId)"
+            Add-Alert 'Yüksek' (L 'Çalışan oyunda loglama kapatılmış') "PID $($p.ProcessId)"
         }
     }
 }
@@ -1589,7 +1705,7 @@ function Get-WslCache {
 }
 
 function Invoke-WslScan {
-    if ($NoWsl) { $script:WslSummary.Add('WSL taraması kapatıldı (-NoWsl)'); return }
+    if ($NoWsl) { $script:WslSummary.Add((L 'WSL taraması kapatıldı (-NoWsl)')); return }
     $distros = Get-WslCache
     $wslExe = Microsoft.PowerShell.Management\Join-Path $env:SystemRoot 'System32\wsl.exe'
     $di = 0
@@ -1597,7 +1713,7 @@ function Invoke-WslScan {
         $di++
         Show-Progress -Status "$di / $($distros.Count)" -Percent ([int](100 * ($di - 1) / [Math]::Max(1, $distros.Count))) -Force
         $running = ($d.State -match '(?i)running|çalış')
-        $stateTxt = if ($running) { 'çalışıyor' } elseif ($d.State -eq 'Bilinmiyor') { 'durum bilinmiyor' } else { 'durmuş' }
+        $stateTxt = if ($running) { (L 'çalışıyor') } elseif ($d.State -eq 'Bilinmiyor') { (L 'durum bilinmiyor') } else { (L 'durmuş') }
         $script:WslSummary.Add("$($d.Name) (WSL$($d.Version), $stateTxt)")
         if ($d.Name -match '(?i)^docker-desktop') { continue }
 
@@ -1605,16 +1721,16 @@ function Invoke-WslScan {
         if ($d.Version -eq 1 -and $d.BasePath -and [IO.Directory]::Exists((Microsoft.PowerShell.Management\Join-Path $d.BasePath 'rootfs'))) {
             $root = Microsoft.PowerShell.Management\Join-Path $d.BasePath 'rootfs'
         } else {
-            Show-Progress -Id 1 -Activity 'WSL' -Status "$($d.Name) bağlanıyor..." -Force
+            Show-Progress -Id 1 -Activity 'WSL' -Status ((L '{0} bağlanıyor...') -f ($($d.Name))) -Force
             foreach ($cand in "\\wsl.localhost\$($d.Name)", "\\wsl$\$($d.Name)") {
                 if ([IO.Directory]::Exists($cand)) { $root = $cand; break }
             }
             if ($root -and -not $running) {
-                Add-Alert 'Bilgi' "WSL dağıtımı taranmak için başlatıldı: $($d.Name)" 'Tarama bitince "wsl --terminate <ad>" ile kapatabilirsiniz.'
+                Add-Alert 'Bilgi' ((L 'WSL dağıtımı taranmak için başlatıldı: {0}') -f ($($d.Name))) (L 'Tarama bitince "wsl --terminate <ad>" ile kapatabilirsiniz.')
             }
         }
         if (-not $root) {
-            Add-Alert 'Orta' "WSL dağıtımına erişilemedi: $($d.Name)" "İçindeki Minecraft dosyaları taranamadı. Konum: $($d.BasePath)"
+            Add-Alert 'Orta' ((L 'WSL dağıtımına erişilemedi: {0}') -f ($($d.Name))) ((L 'İçindeki Minecraft dosyaları taranamadı. Konum: {0}') -f ($($d.BasePath)))
             continue
         }
         $script:WslRoots[$root] = $d.Name
@@ -1635,7 +1751,7 @@ function Invoke-WslScan {
                         $info = Get-LauncherInfo ($(if ($gd) { $gd } else { $root }) + '\x')
                         Add-Account $u $info[0] $info[1] 'şu an açık oyun (WSL)' $gd ([DateTime]::Now)
                     }
-                    if ($line -match '(?i)-Dlog4j2?\.level=off') { Add-Alert 'Yüksek' "WSL'deki oyunda loglama kapatılmış" $d.Name }
+                    if ($line -match '(?i)-Dlog4j2?\.level=off') { Add-Alert 'Yüksek' (L 'WSL''deki oyunda loglama kapatılmış') $d.Name }
                 }
             }
         }
@@ -1648,22 +1764,22 @@ function Test-LinuxInstall {
         $sizeGb = [Math]::Round($fi.Length / 1GB, 1)
         if ($fi.Name -ieq 'ext4.vhdx') {
             if (-not $script:WslBasePaths.Contains($fi.DirectoryName.TrimEnd('\'))) {
-                Add-Alert 'Orta' 'Kayıtlı olmayan WSL diski (ext4.vhdx)' "$($fi.FullName)  ($sizeGb GB): WSL'den kaldırılmış ya da dışa aktarılmış bir Linux olabilir, içi taranamadı"
+                Add-Alert 'Orta' (L 'Kayıtlı olmayan WSL diski (ext4.vhdx)') ((L '{0}  ({1} GB): WSL''den kaldırılmış ya da dışa aktarılmış bir Linux olabilir, içi taranamadı') -f ($($fi.FullName)), ($sizeGb))
             }
         } else {
-            Add-Alert 'Bilgi' 'Sanal makine diski bulundu' "$($fi.FullName)  ($sizeGb GB): içinde Linux/Minecraft olabilir, taranamaz"
+            Add-Alert 'Bilgi' (L 'Sanal makine diski bulundu') ((L '{0}  ({1} GB): içinde Linux/Minecraft olabilir, taranamaz') -f ($($fi.FullName)), ($sizeGb))
         }
     }
 
     $lp = Get-LinuxPartitions
     if ($lp.Ok -and $lp.Items.Count -gt 0) {
-        Add-Alert 'Orta' 'Bilgisayarda Linux bölümü var (dual boot)' (($lp.Items -join ', ') + '. Linux tarafındaki dosyalar Windows''tan okunamaz; orada başka hesaplar olabilir.')
-        $script:WslSummary.Add('Linux bölümü (dual boot) bulundu')
-    } elseif (-not $lp.Ok) { $script:WslSummary.Add('Disk bölümleri kontrol edilemedi (yönetici gerekli)') }
+        Add-Alert 'Orta' (L 'Bilgisayarda Linux bölümü var (dual boot)') (($lp.Items -join ', ') + (L '. Linux tarafındaki dosyalar Windows''tan okunamaz; orada başka hesaplar olabilir.'))
+        $script:WslSummary.Add((L 'Linux bölümü (dual boot) bulundu'))
+    } elseif (-not $lp.Ok) { $script:WslSummary.Add((L 'Disk bölümleri kontrol edilemedi (yönetici gerekli)')) }
     $lb = Get-LinuxBootEntries
-    if ($lb.Ok -and $lb.Items.Count -gt 0) { Add-Alert 'Orta' 'UEFI önyükleme menüsünde Linux girdisi var' ($lb.Items -join ', ') }
+    if ($lb.Ok -and $lb.Items.Count -gt 0) { Add-Alert 'Orta' (L 'UEFI önyükleme menüsünde Linux girdisi var') ($lb.Items -join ', ') }
     $vm = Get-VmSoftware
-    if ($vm.Count -gt 0) { Add-Alert 'Bilgi' 'Sanal makine yazılımı kurulu' ($vm -join ', ') }
+    if ($vm.Count -gt 0) { Add-Alert 'Bilgi' (L 'Sanal makine yazılımı kurulu') ($vm -join ', ') }
 }
 
 $script:zq4 = 63, 32, 108, 107, 106
@@ -1714,7 +1830,7 @@ function Get-SystemInfo {
             $parts = @()
             if ($type) { $parts += $type }
             if ($speed) { $parts += "$speed MHz" }
-            $parts += "$($mods.Count) modül"
+            $parts += ((L '{0} modül') -f ($($mods.Count)))
             $s.RamText = $parts -join ', '
         }
     } catch { }
@@ -1751,7 +1867,7 @@ function Get-SystemInfo {
     try { $phys = @(Storage\Get-PhysicalDisk -ErrorAction Stop) } catch { }
     if ($phys.Count -gt 0) {
         foreach ($pd in $phys | Microsoft.PowerShell.Utility\Sort-Object { [int]$_.DeviceId }) {
-            $bus = [string]$pd.BusType; if ($bus -match '^\d+$') { $bus = $script:BusMap[[int]$bus] }
+            $bus = [string]$pd.BusType; if ($bus -match '^\d+$') { $bus = L $script:BusMap[[int]$bus] }
             $media = [string]$pd.MediaType; if ($media -match '^\d+$') { $media = $script:MediaMap[[int]$media] }
             $name = ([string]$pd.FriendlyName).Trim()
             $kind = 'Bilinmiyor'
@@ -1777,14 +1893,14 @@ function Get-SystemInfo {
             'NVMe' { 'tahmini ~1.500-7.000 MB/sn' }
             'SSD' { 'tahmini ~450-550 MB/sn' }
             'HDD' { 'tahmini ~80-200 MB/sn' }
-            'USB' { 'USB: bağlantıya göre değişir' }
-            default { 'hız bilinmiyor' }
+            'USB' { (L 'USB: bağlantıya göre değişir') }
+            default { (L 'hız bilinmiyor') }
         }
-        if ($d.IsSystem -and $winsatSeq) { $sp = ("ölçülen ~{0:N0} MB/sn sıralı okuma (WinSAT, {1:yyyy-MM-dd})" -f $winsatSeq, $winsatDate) }
+        if ($d.IsSystem -and $winsatSeq) { $sp = ((L 'ölçülen ~{0:N0} MB/sn sıralı okuma (WinSAT, {1:yyyy-MM-dd})') -f $winsatSeq, $winsatDate) }
         $vol = @()
         foreach ($l in $d.Letters) {
             $ld = $free[$l]
-            if ($ld -and $ld.Size) { $vol += ("{0}: {1:N0}/{2:N0} GB boş" -f $l, ($ld.FreeSpace / 1GB), ($ld.Size / 1GB)) } else { $vol += "${l}:" }
+            if ($ld -and $ld.Size) { $vol += ((L '{0}: {1:N0}/{2:N0} GB boş') -f $l, ($ld.FreeSpace / 1GB), ($ld.Size / 1GB)) } else { $vol += "${l}:" }
         }
         $d | Microsoft.PowerShell.Utility\Add-Member -NotePropertyName Speed -NotePropertyValue $sp
         $d | Microsoft.PowerShell.Utility\Add-Member -NotePropertyName Volumes -NotePropertyValue ($vol -join ', ')
@@ -1804,7 +1920,7 @@ function Get-LinuxPartitions {
         foreach ($p in Storage\Get-Partition -ErrorAction Stop) {
             $g = ([string]$p.GptType).Trim('{}').ToLowerInvariant()
             if (($g -and $linuxGpt -contains $g) -or ([int]$p.MbrType -in 130, 131, 142)) {
-                $found += ("Disk {0} / Bölüm {1} ({2:N1} GB)" -f $p.DiskNumber, $p.PartitionNumber, ($p.Size / 1GB))
+                $found += ((L 'Disk {0} / Bölüm {1} ({2:N1} GB)') -f $p.DiskNumber, $p.PartitionNumber, ($p.Size / 1GB))
             }
         }
         $res = [pscustomobject]@{ Ok = $true; Items = $found }
@@ -1844,17 +1960,17 @@ function Get-VmSoftware {
 function Get-OptimalSettings($Sys) {
     $lp = [int]$Sys.Threads; if ($lp -lt 1) { $lp = [Environment]::ProcessorCount }
     switch ($Sys.SystemDiskKind) {
-        'NVMe' { $t = [Math]::Min($lp, 16); $why = 'NVMe SSD: yüksek paralellik' }
-        'SSD' { $t = [Math]::Min($lp, 8); $why = 'SATA SSD: orta-yüksek paralellik' }
-        'HDD' { $t = 2; $why = 'HDD: düşük paralellik (disk kafası sürekli gidip gelmesin)' }
-        default { $t = [Math]::Min($lp, 6); $why = 'disk türü bilinmiyor: dengeli ayar' }
+        'NVMe' { $t = [Math]::Min($lp, 16); $why = (L 'NVMe SSD: yüksek paralellik') }
+        'SSD' { $t = [Math]::Min($lp, 8); $why = (L 'SATA SSD: orta-yüksek paralellik') }
+        'HDD' { $t = 2; $why = (L 'HDD: düşük paralellik (disk kafası sürekli gidip gelmesin)') }
+        default { $t = [Math]::Min($lp, 6); $why = (L 'disk türü bilinmiyor: dengeli ayar') }
     }
     if ($lp -gt 2) { $t = [Math]::Min($t, $lp - 1) }
     $free = [double]$Sys.RamFreeGB
-    if ($free -gt 0 -and $free -lt 2) { $t = [Math]::Min($t, 2); $why += ', boş RAM az' }
-    elseif ($free -gt 0 -and $free -lt 4) { $t = [Math]::Min($t, 4); $why += ', boş RAM sınırlı' }
-    if ($Sys.CpuLoad -ge 80) { $t = [Math]::Max(1, [int]($t / 2)); $why += ', işlemci şu an yoğun' }
-    if ($Threads -gt 0) { $t = $Threads; $why = 'elle ayarlandı (-Threads)' }
+    if ($free -gt 0 -and $free -lt 2) { $t = [Math]::Min($t, 2); $why += (L ', boş RAM az') }
+    elseif ($free -gt 0 -and $free -lt 4) { $t = [Math]::Min($t, 4); $why += (L ', boş RAM sınırlı') }
+    if ($Sys.CpuLoad -ge 80) { $t = [Math]::Max(1, [int]($t / 2)); $why += (L ', işlemci şu an yoğun') }
+    if ($Threads -gt 0) { $t = $Threads; $why = (L 'elle ayarlandı (-Threads)') }
     $t = [Math]::Max(1, [int]$t)
     if ($free -le 0) { $free = 4 }
     $capRel = [long][Math]::Max(32MB, [Math]::Min(512MB, ($free * 1GB * 0.5) / ($t * 3)))
@@ -1875,25 +1991,25 @@ function Get-PanelLines {
     $S = $script:Sys
     $L.Add(@('  AltDetectorX', 'Cyan'))
     $L.Add(@('', 'Gray'))
-    $L.Add(@('  # SİSTEM', 'White'))
+    $L.Add(@((L '  # SİSTEM'), 'White'))
     $osParts = @(([string]$S.OS) -split '\s{2,}\(' | Microsoft.PowerShell.Core\ForEach-Object { $_.Trim().TrimEnd(')') })
     Add-PanelItem $L 'Windows' $osParts
-    Add-PanelItem $L 'Cihaz' @($S.Device)
+    Add-PanelItem $L (L 'Cihaz') @($S.Device)
     $cpuVals = @($S.Cpu)
     if ($S.Cores) {
-        $cpuVals += ("{0} çekirdek / {1} iş parçacığı" -f $S.Cores, $S.Threads)
-        $cpuVals += ("{0:N1} GHz, yük %{1}" -f ($S.CpuMHz / 1000), $S.CpuLoad)
+        $cpuVals += ((L '{0} çekirdek / {1} iş parçacığı') -f $S.Cores, $S.Threads)
+        $cpuVals += ((L '{0:N1} GHz, yük %{1}') -f ($S.CpuMHz / 1000), $S.CpuLoad)
     }
-    Add-PanelItem $L 'İşlemci' $cpuVals
+    Add-PanelItem $L (L 'İşlemci') $cpuVals
     $ram = "{0:N0} GB" -f $S.RamTotalGB
     if ($S.RamText) { $ram += ", $($S.RamText)" }
-    Add-PanelItem $L 'RAM' @($ram, ("boş {0:N1} GB" -f $S.RamFreeGB))
-    Add-PanelItem $L 'Ekran kartı' @($S.Gpu)
+    Add-PanelItem $L 'RAM' @($ram, ((L 'boş {0:N1} GB') -f $S.RamFreeGB))
+    Add-PanelItem $L (L 'Ekran kartı') @($S.Gpu)
     if ($S.Boot) {
         $up = [DateTime]::Now - $S.Boot
-        Add-PanelItem $L 'Son açılış' @(("{0:yyyy-MM-dd HH:mm}" -f $S.Boot), ("{0} gün {1} saat önce" -f $up.Days, $up.Hours))
+        Add-PanelItem $L (L 'Son açılış') @(("{0:yyyy-MM-dd HH:mm}" -f $S.Boot), ((L '{0} gün {1} saat önce') -f $up.Days, $up.Hours))
     }
-    if ($S.Disks.Count -eq 0) { Add-PanelItem $L 'Disk' @('okunamadı') 'DarkGray' }
+    if ($S.Disks.Count -eq 0) { Add-PanelItem $L 'Disk' @((L 'okunamadı')) 'DarkGray' }
     foreach ($d in $S.Disks) {
         $kindTxt = switch ($d.Kind) { 'NVMe' { 'NVMe SSD' } 'SSD' { 'SATA SSD' } 'HDD' { 'HDD' } 'USB' { 'USB disk' } default { "$($d.Bus) $($d.Media)".Trim() } }
         $nm = $d.Name; if ($d.IsSystem) { $nm += ' [sistem]' }
@@ -1906,45 +2022,45 @@ function Get-PanelLines {
     $L.Add(@('  # LINUX / WSL', 'White'))
     $ds = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
     if ($null -ne $script:WslCache) { foreach ($x in $script:WslCache) { $ds.Add($x) } }
-    if ($ds.Count -eq 0) { Add-PanelItem $L 'WSL' @('kurulu dağıtım yok') }
+    if ($ds.Count -eq 0) { Add-PanelItem $L 'WSL' @((L 'kurulu dağıtım yok')) }
     else {
         $wv = foreach ($x in $ds) {
-            $st = 'durmuş'
-            if ($x.State -match '(?i)running|çalış') { $st = 'çalışıyor' } elseif ($x.State -eq 'Bilinmiyor') { $st = 'durum bilinmiyor' }
+            $st = (L 'durmuş')
+            if ($x.State -match '(?i)running|çalış') { $st = (L 'çalışıyor') } elseif ($x.State -eq 'Bilinmiyor') { $st = (L 'durum bilinmiyor') }
             "$($x.Name) (WSL$($x.Version), $st)"
         }
         Add-PanelItem $L 'WSL' @($wv) 'Yellow'
     }
     $lp = Get-LinuxPartitions
-    if (-not $lp.Ok) { Add-PanelItem $L 'Dual boot' @('kontrol edilemedi') 'DarkGray' }
-    elseif ($lp.Items.Count -gt 0) { Add-PanelItem $L 'Dual boot' (@('Linux bölümü var') + @($lp.Items)) 'Yellow' }
-    else { Add-PanelItem $L 'Dual boot' @('Linux bölümü yok') }
+    if (-not $lp.Ok) { Add-PanelItem $L 'Dual boot' @((L 'kontrol edilemedi')) 'DarkGray' }
+    elseif ($lp.Items.Count -gt 0) { Add-PanelItem $L 'Dual boot' (@((L 'Linux bölümü var')) + @($lp.Items)) 'Yellow' }
+    else { Add-PanelItem $L 'Dual boot' @((L 'Linux bölümü yok')) }
     $lb = Get-LinuxBootEntries
-    if ($lb.Ok -and $lb.Items.Count -gt 0) { Add-PanelItem $L 'Önyükleme' @($lb.Items) 'Yellow' }
+    if ($lb.Ok -and $lb.Items.Count -gt 0) { Add-PanelItem $L (L 'Önyükleme') @($lb.Items) 'Yellow' }
     $vm = Get-VmSoftware
-    if ($vm.Count -gt 0) { Add-PanelItem $L 'Sanal makine' @($vm) 'Yellow' } else { Add-PanelItem $L 'Sanal makine' @('yok') }
+    if ($vm.Count -gt 0) { Add-PanelItem $L (L 'Sanal makine') @($vm) 'Yellow' } else { Add-PanelItem $L (L 'Sanal makine') @((L 'yok')) }
 
     $L.Add(@('', 'Gray'))
-    $L.Add(@('  # TARAMA AYARI', 'White'))
-    Add-PanelItem $L 'Paralellik' @(("{0} iş parçacığı" -f $script:Settings.Threads))
-    Add-PanelItem $L 'Öncelik' @('düşük')
-    Add-PanelItem $L 'Dosya sınırı' @(("{0:N0} MB" -f ($script:Settings.CapRelevant / 1MB)))
-    Add-PanelItem $L 'Neden' @($script:Settings.Reason -split ',\s*')
-    if (-not $script:IsAdmin) { Add-PanelItem $L 'Yönetici' @('hayır', 'bazı kontroller atlanacak') 'DarkYellow' }
+    $L.Add(@((L '  # TARAMA AYARI'), 'White'))
+    Add-PanelItem $L (L 'Paralellik') @(((L '{0} iş parçacığı') -f $script:Settings.Threads))
+    Add-PanelItem $L (L 'Öncelik') @((L 'düşük'))
+    Add-PanelItem $L (L 'Dosya sınırı') @(("{0:N0} MB" -f ($script:Settings.CapRelevant / 1MB)))
+    Add-PanelItem $L (L 'Neden') @($script:Settings.Reason -split ',\s*')
+    if (-not $script:IsAdmin) { Add-PanelItem $L (L 'Yönetici') @((L 'hayır'), (L 'bazı kontroller atlanacak')) 'DarkYellow' }
     return , $L
 }
 
 function Show-Menu {
     $items = @(
-        @{ Type = 'scan'; Mode = 'Quick'; Label = 'Hızlı Tarama' },
-        @{ Type = 'scan'; Mode = 'Normal'; Label = 'Normal Tarama' },
-        @{ Type = 'scan'; Mode = 'Deep'; Label = 'Tam Tarama' },
+        @{ Type = 'scan'; Mode = 'Quick'; Label = (L 'Hızlı Tarama') },
+        @{ Type = 'scan'; Mode = 'Normal'; Label = (L 'Normal Tarama') },
+        @{ Type = 'scan'; Mode = 'Deep'; Label = (L 'Tam Tarama') },
         @{ Type = 'sep' },
-        @{ Type = 'opt'; Key = 'Paths'; Label = 'Dosya yollarını göster' },
-        @{ Type = 'opt'; Key = 'Wsl'; Label = 'WSL dağıtımlarını tara' },
-        @{ Type = 'opt'; Key = 'Export'; Label = 'Raporu masaüstüne kaydet' },
+        @{ Type = 'opt'; Key = 'Paths'; Label = (L 'Dosya yollarını göster') },
+        @{ Type = 'opt'; Key = 'Wsl'; Label = (L 'WSL dağıtımlarını tara') },
+        @{ Type = 'opt'; Key = 'Export'; Label = (L 'Raporu masaüstüne kaydet') },
         @{ Type = 'sep' },
-        @{ Type = 'exit'; Label = 'Çıkış' }
+        @{ Type = 'exit'; Label = (L 'Çıkış') }
     )
     # Menüde tüm seçenekler varsayılan olarak açık gelir; kullanıcı Boşluk ile kapatabilir.
     $opts = @{ Paths = $true; Wsl = $true; Export = $true }
@@ -1989,26 +2105,42 @@ function Show-Menu {
     function Show-FullMenu {
         try { [Console]::BackgroundColor = [ConsoleColor]::Black; [Console]::Clear() } catch { }
         $pw = Get-OutWidth
-        $rows = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
-        $rows.Add(@())
+        # Sistem paneli satırları
+        $panelRows = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
         foreach ($l in $panel) {
-            if (-not $l[0]) { $rows.Add(@()); continue }
-            foreach ($ln in (Split-Wrap ([string]$l[0]) $pw (' ' * 17))) { $rows.Add(@(@{ T = $m + $ln; F = $l[1] })) }
+            if (-not $l[0]) { $panelRows.Add(@()); continue }
+            foreach ($ln in (Split-Wrap ([string]$l[0]) $pw (' ' * 17))) { $panelRows.Add(@(@{ T = $m + $ln; F = $l[1] })) }
         }
-        $rows.Add(@())
-        $rows.Add(@(@{ T = $m + '  ' + ([string][char]0x2500 * [Math]::Min(66, $pw - 4)); F = 'DarkCyan' }))
-        $top = 0; try { $top = [Console]::WindowTop } catch { }
+        # Menü kısmı (öğe satırları -1 dışındaki indeksle işaretli)
+        $tail = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
+        $tail.Add(@{ P = @(); I = -1 })
+        $tail.Add(@{ P = @(@{ T = $m + '  ' + ([string][char]0x2500 * [Math]::Min(66, $pw - 4)); F = 'DarkCyan' }); I = -1 })
         for ($i = 0; $i -lt $items.Count; $i++) {
-            if ($items[$i].Type -eq 'sep') { $rows.Add(@()); continue }
-            $itemRow[$i] = $top + $rows.Count
-            $rows.Add((Get-ItemParts $i))
+            if ($items[$i].Type -eq 'sep') { $tail.Add(@{ P = @(); I = -1 }); continue }
+            $tail.Add(@{ P = (Get-ItemParts $i); I = $i })
         }
-        $rows.Add(@())
-        $hint = ("  {0}/{1} - SEÇ     ENTER - ONAYLA     BO{2}LUK - AÇ/KAPAT     1-2-3 - HIZLI SEÇİM     ESC - ÇIKI{2}" -f [char]0x2191, [char]0x2193, [char]0x015E)
-        foreach ($ln in (Split-Wrap $hint $pw '  ')) { $rows.Add(@(@{ T = $m + $ln; F = 'DarkGray' })) }
-        $rows.Add(@())
-        $rows.Add(@(@{ T = $m + (Get-SigPadded $pw); F = 'DarkGray' }))
-        for ($r = 0; $r -lt $rows.Count; $r++) { Write-MenuRow ($top + $r) $rows[$r] }
+        $tail.Add(@{ P = @(); I = -1 })
+        $hint = ((L '  {0}/{1} - SEÇ     ENTER - ONAYLA     BO{2}LUK - AÇ/KAPAT     1-2-3 - HIZLI SEÇİM     ESC - ÇIKI{2}') -f [char]0x2191, [char]0x2193, [char]0x015E)
+        foreach ($ln in (Split-Wrap $hint $pw '  ')) { $tail.Add(@{ P = @(@{ T = $m + $ln; F = 'DarkGray' }); I = -1 }) }
+        $tail.Add(@{ P = @(); I = -1 })
+        $tail.Add(@{ P = @(@{ T = $m + (Get-SigPadded $pw); F = 'DarkGray' }); I = -1 })
+
+        # Pencere kısaysa menü her zaman görünsün diye sistem panelini kırp (tampon pencereyle aynı boyda olabilir).
+        $avail = 25
+        try { $avail = [Math]::Min([Console]::WindowHeight, [Console]::BufferHeight - [Console]::WindowTop) - 1 } catch { }
+        $keep = $panelRows.Count
+        $over = 1 + $panelRows.Count + $tail.Count - $avail
+        if ($over -gt 0) { $keep = [Math]::Max(0, $panelRows.Count - $over) }
+
+        $top = 0; try { $top = [Console]::WindowTop } catch { }
+        $r = $top
+        Write-MenuRow ($r++) @()
+        for ($j = 0; $j -lt $keep; $j++) { Write-MenuRow ($r++) $panelRows[$j] }
+        $itemRow.Clear()
+        foreach ($t in $tail) {
+            if ($t.I -ge 0) { $itemRow[$t.I] = $r }
+            Write-MenuRow ($r++) $t.P
+        }
         try { [Console]::SetCursorPosition(0, $top) } catch { }
     }
 
@@ -2046,32 +2178,32 @@ function Show-Menu {
 }
 
 function Get-ShortSource([string]$S) {
-    if ($S -like 'hesap dosyas*') { return 'hesap dosyası' }
-    if ($S -like 'IAS kay*') { return 'IAS kaydı' }
-    if ($S -like 'IAS ile*') { return 'IAS ile geçiş' }
-    if ($S -like '*açık oyun*') { return 'açık oyun' }
-    return $S
+    if ($S -like 'hesap dosyas*') { return (L 'hesap dosyası') }
+    if ($S -like 'IAS kay*') { return (L 'IAS kaydı') }
+    if ($S -like 'IAS ile*') { return (L 'IAS ile geçiş') }
+    if ($S -like '*açık oyun*') { return (L 'açık oyun') }
+    return (L $S)
 }
 
 function Write-Report {
     if (-not $script:EndTime) { $script:EndTime = [DateTime]::Now }
-    $yes = 'Hayır'; if ($script:IsAdmin) { $yes = 'Evet' }
+    $yes = (L 'Hayır'); if ($script:IsAdmin) { $yes = (L 'Evet') }
     Out-Line ''
     Out-Line '# AltDetectorX' 'Cyan'
-    Out-Line ("  Başlangıç : {0:yyyy-MM-dd HH:mm:ss}" -f $script:StartTime) 'DarkGray'
-    Out-Line ("  Bitiş     : {0:yyyy-MM-dd HH:mm:ss}" -f $script:EndTime) 'DarkGray'
-    Out-Line ("  Tarama    : {0}" -f $script:ModeLabel[$Mode]) 'DarkGray'
-    Out-Line ("  Yönetici  : {0}" -f $yes) 'DarkGray'
+    Out-Line ((L '  Başlangıç : {0:yyyy-MM-dd HH:mm:ss}') -f $script:StartTime) 'DarkGray'
+    Out-Line ((L '  Bitiş     : {0:yyyy-MM-dd HH:mm:ss}') -f $script:EndTime) 'DarkGray'
+    Out-Line ((L '  Tarama    : {0}') -f (L $script:ModeLabel[$Mode])) 'DarkGray'
+    Out-Line ((L '  Yönetici  : {0}') -f $yes) 'DarkGray'
     if ($script:WslSummary.Count -gt 0) {
         Out-Line '  WSL/Linux :' 'DarkGray'
         foreach ($w in $script:WslSummary) { Out-Line ("    - " + $w) 'DarkGray' -Indent '      ' }
-    } else { Out-Line '  WSL/Linux : bulunamadı' 'DarkGray' }
+    } else { Out-Line (L '  WSL/Linux : bulunamadı') 'DarkGray' }
     Out-Line ''
 
-    Out-Line '# HESAPLAR' 'Cyan'
+    Out-Line (L '# HESAPLAR') 'Cyan'
     $groups = @($script:Accounts | Microsoft.PowerShell.Utility\Group-Object { $_.Name.ToLowerInvariant() })
     if ($groups.Count -eq 0) {
-        Out-Line '  Hiç hesap bulunamadı.' 'Yellow'
+        Out-Line (L '  Hiç hesap bulunamadı.') 'Yellow'
         Out-Line ''
     } else {
         $ordered = $groups | Microsoft.PowerShell.Core\ForEach-Object {
@@ -2080,12 +2212,12 @@ function Write-Report {
             [pscustomobject]@{ Name = $display; Last = $last; Items = $_.Group }
         } | Microsoft.PowerShell.Utility\Sort-Object Last -Descending
 
-        Out-Line ("  {0} farklı hesap bulundu" -f $groups.Count) 'White'
+        Out-Line ((L '  {0} farklı hesap bulundu') -f $groups.Count) 'White'
         Out-Line ''
         foreach ($g in $ordered) {
             $launchers = @($g.Items | Microsoft.PowerShell.Utility\Group-Object { "$($_.Launcher)`t$($_.Detail)" })
             Out-Line ('  ' + $g.Name) 'Magenta' -NoNewline
-            Out-Line ("   son: {0:yyyy-MM-dd}" -f $g.Last) 'DarkGray'
+            Out-Line ((L '   son: {0:yyyy-MM-dd}') -f $g.Last) 'DarkGray'
 
             $sortedL = @($launchers | Microsoft.PowerShell.Utility\Sort-Object { Get-MaxDate $_.Group } -Descending)
             for ($i = 0; $i -lt $sortedL.Count; $i++) {
@@ -2098,7 +2230,7 @@ function Write-Report {
 
                 $srcParts = @($lg.Group | Microsoft.PowerShell.Utility\Group-Object { Get-ShortSource $_.Source } | Microsoft.PowerShell.Core\ForEach-Object {
                         $files = @($_.Group | Microsoft.PowerShell.Utility\Select-Object -ExpandProperty Path -Unique).Count
-                        if ($_.Name -eq 'log') { "$files log" } elseif ($files -gt 1) { "$($_.Name) x$files" } else { $_.Name }
+                        if ($_.Name -eq 'log') { ((L '{0} log') -f ($files)) } elseif ($files -gt 1) { "$($_.Name) x$files" } else { $_.Name }
                     })
                 $min = Get-MinDate $lg.Group
                 $max = Get-MaxDate $lg.Group
@@ -2106,8 +2238,9 @@ function Write-Report {
                 if ($min.Date -ne $max.Date) { $range = "$($min.ToString('yyyy-MM-dd')) - $($max.ToString('yyyy-MM-dd'))" }
 
                 $color = 'Green'
-                if ($srcParts -match 'IAS|alt yöneticisi') { $color = 'Red' }
-                elseif ($first.Launcher -match 'Bilinmeyen' -or $first.Detail -match 'Çöp kutusundan|Gölge kopya') { $color = 'Yellow' }
+                # Renk kararları dile bağlı olmasın: dahili kaynak adlarına ve dosya yoluna bakılır.
+                if (@($lg.Group | Microsoft.PowerShell.Core\Where-Object { $_.Source -match 'IAS|alt yöneticisi' }).Count -gt 0) { $color = 'Red' }
+                elseif ($first.Launcher -eq (L 'Bilinmeyen konum') -or $first.Path -match '\\\$Recycle\.Bin\\' -or (Test-IsShadowPath $first.Path)) { $color = 'Yellow' }
 
                 Out-Line ('    ' + $branch) 'DarkGray' -NoNewline
                 Out-Line $first.Launcher $color
@@ -2118,23 +2251,23 @@ function Write-Report {
                 if ($Paths) {
                     $plist = @($lg.Group | Microsoft.PowerShell.Utility\Sort-Object Date -Descending | Microsoft.PowerShell.Utility\Select-Object -ExpandProperty Path -Unique | Microsoft.PowerShell.Core\Where-Object { $_ })
                     foreach ($pp in ($plist | Microsoft.PowerShell.Utility\Select-Object -First 5)) { Out-Line ($pre + (Resolve-OriginalPath $pp)) 'DarkGray' -Indent ($pre + '  ') }
-                    if ($plist.Count -gt 5) { Out-Line ($pre + "... ve $($plist.Count - 5) dosya daha") 'DarkGray' }
+                    if ($plist.Count -gt 5) { Out-Line ($pre + ((L '... ve {0} dosya daha') -f ($($plist.Count - 5)))) 'DarkGray' }
                 }
             }
             Out-Line ''
         }
     }
 
-    Out-Line '# UYARILAR' 'Cyan'
+    Out-Line (L '# UYARILAR') 'Cyan'
     $rank = @{ 'Yüksek' = 0; 'Orta' = 1; 'Bilgi' = 2 }
     $seenAlert = Microsoft.PowerShell.Utility\New-Object 'System.Collections.Generic.HashSet[string]'
     $alerts = @($script:Alerts | Microsoft.PowerShell.Core\Where-Object { $seenAlert.Add("$($_.Level)|$($_.Title)|$($_.Detail)") } | Microsoft.PowerShell.Utility\Sort-Object @{ Expression = { $rank[$_.Level] } }, Title)
     if ($alerts.Count -eq 0) {
-        Out-Line '  Herhangi bir uyarı yok.' 'Green'
+        Out-Line (L '  Herhangi bir uyarı yok.') 'Green'
     } else {
         foreach ($a in $alerts) {
             $col = switch ($a.Level) { 'Yüksek' { 'Red' } 'Orta' { 'Yellow' } default { 'DarkGray' } }
-            Out-Line ("  [{0}]" -f $a.Level.ToUpper()) $col
+            Out-Line ("  [{0}]" -f (Get-LevelText $a.Level)) $col
             Out-Line ("    " + $a.Title) 'White' -Indent '    '
             if ($a.Detail) {
                 $dp = @($a.Detail -split '\s{2,}\(')
@@ -2150,12 +2283,12 @@ function Write-Report {
 
     $elapsed = $script:EndTime - $script:StartTime
     Out-Line ''
-    Out-Line '# ÖZET' 'Cyan'
-    Out-Line ("  Taranan klasör : {0:N0}" -f $script:DirCount) 'DarkGray'
-    Out-Line ("  Okunan log     : {0:N0}" -f $script:Found.Logs.Count) 'DarkGray'
-    Out-Line ("  Hesap dosyası  : {0:N0}" -f $script:Found.Accounts.Count) 'DarkGray'
-    Out-Line ("  Erişilemeyen   : {0:N0}" -f $script:Denied) 'DarkGray'
-    Out-Line ("  Süre           : {0:N1} sn" -f $elapsed.TotalSeconds) 'DarkGray'
+    Out-Line (L '# ÖZET') 'Cyan'
+    Out-Line ((L '  Taranan klasör : {0:N0}') -f $script:DirCount) 'DarkGray'
+    Out-Line ((L '  Okunan log     : {0:N0}') -f $script:Found.Logs.Count) 'DarkGray'
+    Out-Line ((L '  Hesap dosyası  : {0:N0}') -f $script:Found.Accounts.Count) 'DarkGray'
+    Out-Line ((L '  Erişilemeyen   : {0:N0}') -f $script:Denied) 'DarkGray'
+    Out-Line ((L '  Süre           : {0:N1} sn') -f $elapsed.TotalSeconds) 'DarkGray'
     Out-Line ''
     Out-Line (Get-SigPadded (Get-OutWidth)) 'DarkGray'
     Out-Line ''
@@ -2223,10 +2356,10 @@ function Invoke-Elevation {
         '$b = $null'
         'try { $b = [IO.File]::ReadAllBytes($p) } catch { }'
         'try { [IO.File]::Delete($p) } catch { }'
-        ('if ($null -eq $b) { Write-Host ' + $q + 'AltDetectorX: başlatma dosyası okunamadı.' + $q + ' -ForegroundColor Red; return }')
+        ('if ($null -eq $b) { Write-Host ' + $q + (L 'AltDetectorX: başlatma dosyası okunamadı.') + $q + ' -ForegroundColor Red; return }')
         ('$c = -join ([Security.Cryptography.SHA256]::Create().ComputeHash($b) | ForEach-Object { $_.ToString(' + $q + 'x2' + $q + ') })')
-        ('if ($c -ne $h) { Write-Host ' + $q + 'AltDetectorX: dosya doğrulaması başarısız, çalıştırılmadı.' + $q + ' -ForegroundColor Red; return }')
-        ('$Host.UI.RawUI.WindowTitle = ' + $q + 'AltDetectorX (Yönetici)' + $q)
+        ('if ($c -ne $h) { Write-Host ' + $q + (L 'AltDetectorX: dosya doğrulaması başarısız, çalıştırılmadı.') + $q + ' -ForegroundColor Red; return }')
+        ('$Host.UI.RawUI.WindowTitle = ' + $q + (L 'AltDetectorX (Yönetici)') + $q)
         ('& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString($b))) ' + ($script:ForwardArgs -join ' '))
     ) -join "`n"
     $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($loader))
@@ -2261,25 +2394,35 @@ $script:OrigPriority = $null
 $script:MenuShown = $false
 try {
     Initialize-Runtime
+    # Dil: -Lang verildiyse o; etkileşimli açılışta sor; diğer durumlarda Türkçe.
+    $langCode = $Lang
+    if (-not $langCode) { if ($script:Tui -and -not $script:ParamGiven) { $langCode = Select-Language } else { $langCode = 'TR' } }
+    if (-not (Import-Language $langCode)) {
+        Microsoft.PowerShell.Utility\Write-Host ''
+        Microsoft.PowerShell.Utility\Write-Host '  English language file could not be loaded; continuing in Turkish. / İngilizce dil dosyası yüklenemedi; Türkçe devam ediliyor.' -ForegroundColor Yellow
+        Microsoft.PowerShell.Utility\Start-Sleep -Seconds 2
+    }
+    if (-not ($script:ForwardArgs | Microsoft.PowerShell.Core\Where-Object { $_ -like '-Lang *' })) { $script:ForwardArgs.Add("-Lang $script:Lang") }
+    try { [Console]::Clear() } catch { }
     try { $Host.UI.RawUI.WindowTitle = 'AltDetectorX' } catch { }
     $script:IsAdmin = Test-IsAdmin
     if (-not $script:IsAdmin -and -not $NoElevate) {
         Microsoft.PowerShell.Utility\Write-Host ''
-        Microsoft.PowerShell.Utility\Write-Host '  AltDetectorX yönetici izni istiyor (tam tarama için gerekli)...' -ForegroundColor Cyan
+        Microsoft.PowerShell.Utility\Write-Host (L '  AltDetectorX yönetici izni istiyor (tam tarama için gerekli)...') -ForegroundColor Cyan
         $elev = Invoke-Elevation
         if ($elev -eq 'inline') { return }
         if ($elev -eq 'window') {
-            Microsoft.PowerShell.Utility\Write-Host '  Windows, yönetici izni için ayrı bir pencere açtı; tarama orada çalışıyor.' -ForegroundColor Green
-            Microsoft.PowerShell.Utility\Write-Host '  İpucu: Terminali "Yönetici olarak çalıştır" ile açarsanız her şey bu pencerede çalışır.' -ForegroundColor DarkGray
+            Microsoft.PowerShell.Utility\Write-Host (L '  Windows, yönetici izni için ayrı bir pencere açtı; tarama orada çalışıyor.') -ForegroundColor Green
+            Microsoft.PowerShell.Utility\Write-Host (L '  İpucu: Terminali "Yönetici olarak çalıştır" ile açarsanız her şey bu pencerede çalışır.') -ForegroundColor DarkGray
             return
         }
-        Microsoft.PowerShell.Utility\Write-Host '  Yönetici izni verilmedi. Sınırlı modda devam ediliyor...' -ForegroundColor Yellow
+        Microsoft.PowerShell.Utility\Write-Host (L '  Yönetici izni verilmedi. Sınırlı modda devam ediliyor...') -ForegroundColor Yellow
         Microsoft.PowerShell.Utility\Start-Sleep -Seconds 2
     }
     if ($script:Tui) {
         try { [Console]::Clear() } catch { }
         Microsoft.PowerShell.Utility\Write-Host ''
-        Microsoft.PowerShell.Utility\Write-Host '  AltDetectorX: sistem bilgileri okunuyor...' -ForegroundColor Cyan
+        Microsoft.PowerShell.Utility\Write-Host (L '  AltDetectorX: sistem bilgileri okunuyor...') -ForegroundColor Cyan
     }
     $script:Sys = Get-SystemInfo
     $script:Settings = Get-OptimalSettings $script:Sys
@@ -2290,7 +2433,7 @@ try {
         $choice = Show-Menu
         if ($null -eq $choice) {
             try { [Console]::Clear(); [Console]::CursorVisible = $true } catch { }
-            Microsoft.PowerShell.Utility\Write-Host 'AltDetectorX kapatıldı.' -ForegroundColor DarkGray
+            Microsoft.PowerShell.Utility\Write-Host (L 'AltDetectorX kapatıldı.') -ForegroundColor DarkGray
             return
         }
         $Mode = $choice.Mode
@@ -2301,7 +2444,7 @@ try {
         }
     } elseif (-not $script:Tui) {
         Microsoft.PowerShell.Utility\Write-Host ''
-        Microsoft.PowerShell.Utility\Write-Host ("  AltDetectorX: {0} başlıyor." -f $script:ModeLabel[$Mode]) -ForegroundColor Cyan
+        Microsoft.PowerShell.Utility\Write-Host ((L '  AltDetectorX: {0} başlıyor.') -f (L $script:ModeLabel[$Mode])) -ForegroundColor Cyan
     }
 
     try {
@@ -2313,32 +2456,32 @@ try {
     $script:StartTime = [DateTime]::Now
     Start-Ui
 
-    Set-Phase 1 'Ortam kontrolü'
+    Set-Phase 1 (L 'Ortam kontrolü')
     Test-Environment
 
-    Set-Phase 2 'Silinmiş dosyalar'
+    Set-Phase 2 (L 'Silinmiş dosyalar')
     Invoke-DeletedScan
 
-    Set-Phase 3 'Klasörler taranıyor'
+    Set-Phase 3 (L 'Klasörler taranıyor')
     Invoke-Scan
 
     Set-Phase 4 'WSL / Linux'
     Invoke-WslScan
 
-    Set-Phase 5 'Log dosyaları okunuyor'
+    Set-Phase 5 (L 'Log dosyaları okunuyor')
     Invoke-LogParse
 
-    Set-Phase 6 'Hesap dosyaları'
+    Set-Phase 6 (L 'Hesap dosyaları')
     Invoke-AccountFiles
 
-    Set-Phase 7 'Son kontroller'
+    Set-Phase 7 (L 'Son kontroller')
     Invoke-Ias
     Invoke-AltManagers
     Test-LogIntegrity
     Invoke-ProcessScan
     Test-LinuxInstall
     Test-ShadowDeleted
-    Show-Progress -Status 'Tamamlandı' -Percent 100 -Force
+    Show-Progress -Status (L 'Tamamlandı') -Percent 100 -Force
 
     $script:EndTime = [DateTime]::Now
     Stop-Ui
@@ -2349,11 +2492,11 @@ try {
         try {
             $Export = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Export)
             [IO.File]::WriteAllText($Export, $script:Report.ToString(), (Microsoft.PowerShell.Utility\New-Object Text.UTF8Encoding($true)))
-            Out-Line "Rapor kaydedildi: $Export" 'Green'
-        } catch { Out-Line "Rapor kaydedilemedi: $($_.Exception.Message)" 'Red' }
+            Out-Line ((L 'Rapor kaydedildi: {0}') -f ($Export)) 'Green'
+        } catch { Out-Line ((L 'Rapor kaydedilemedi: {0}') -f ($($_.Exception.Message))) 'Red' }
     }
     if ($script:MenuShown) {
-        Microsoft.PowerShell.Utility\Write-Host ($script:MarginText + '  Kapatmak için bir tuşa basın...') -ForegroundColor DarkGray
+        Microsoft.PowerShell.Utility\Write-Host ($script:MarginText + (L '  Kapatmak için bir tuşa basın...')) -ForegroundColor DarkGray
         Microsoft.PowerShell.Utility\Write-Host ''
         try { [void][Console]::ReadKey($true) } catch { }
     }
