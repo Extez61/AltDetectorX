@@ -2236,9 +2236,21 @@ function Invoke-Elevation {
     if (-not $exe -or [IO.Path]::GetFileName($exe) -notmatch '(?i)^(powershell|pwsh)\.exe$') {
         $exe = Microsoft.PowerShell.Management\Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     }
+    # Windows 11 sudo "satır içi" (normal) modda açıksa yönetici olarak AYNI terminalde çalış.
+    # (HKLM\...\Sudo: Enabled = 3 -> satır içi; 1 -> yeni pencere; 2 -> girişsiz; 0/yok -> kapalı)
+    $sudo = Microsoft.PowerShell.Management\Join-Path $env:SystemRoot 'System32\sudo.exe'
+    $sudoMode = $null
+    try { $sudoMode = (Microsoft.PowerShell.Management\Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Sudo' -ErrorAction Stop).Enabled } catch { }
+    if ([IO.File]::Exists($sudo) -and $sudoMode -eq 3) {
+        try { & $sudo $exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc } catch { }
+        # Başlatıcı çalıştıysa geçici dosyayı hemen siler; dosya hâlâ duruyorsa izin verilmemiştir.
+        if (-not [IO.File]::Exists($tmp)) { return 'inline' }
+        try { [IO.File]::Delete($tmp) } catch { }
+        return $false
+    }
     try {
         Microsoft.PowerShell.Management\Start-Process -FilePath $exe -Verb RunAs -ArgumentList "-NoProfile -NoExit -ExecutionPolicy Bypass -EncodedCommand $enc" -ErrorAction Stop | Microsoft.PowerShell.Core\Out-Null
-        return $true
+        return 'window'
     } catch {
         try { [IO.File]::Delete($tmp) } catch { }
         return $false
@@ -2254,8 +2266,11 @@ try {
     if (-not $script:IsAdmin -and -not $NoElevate) {
         Microsoft.PowerShell.Utility\Write-Host ''
         Microsoft.PowerShell.Utility\Write-Host '  AltDetectorX yönetici izni istiyor (tam tarama için gerekli)...' -ForegroundColor Cyan
-        if (Invoke-Elevation) {
-            Microsoft.PowerShell.Utility\Write-Host '  Yönetici penceresinde açıldı. Bu pencereyi kapatabilirsiniz.' -ForegroundColor Green
+        $elev = Invoke-Elevation
+        if ($elev -eq 'inline') { return }
+        if ($elev -eq 'window') {
+            Microsoft.PowerShell.Utility\Write-Host '  Windows, yönetici izni için ayrı bir pencere açtı; tarama orada çalışıyor.' -ForegroundColor Green
+            Microsoft.PowerShell.Utility\Write-Host '  İpucu: Terminali "Yönetici olarak çalıştır" ile açarsanız her şey bu pencerede çalışır.' -ForegroundColor DarkGray
             return
         }
         Microsoft.PowerShell.Utility\Write-Host '  Yönetici izni verilmedi. Sınırlı modda devam ediliyor...' -ForegroundColor Yellow

@@ -20,7 +20,9 @@ CMD'ye ya da PowerShell'e yapıştırıp çalıştırın (ikisinde de çalışı
 powershell -NoProfile -ExecutionPolicy Bypass -Command "curl.exe -fsSL -m 30 --retry 3 -o ([IO.Path]::GetTempPath()+'adx.ps1') https://raw.githubusercontent.com/Extez61/AltDetectorX/main/start.ps1; & ([IO.Path]::GetTempPath()+'adx.ps1')"
 ```
 
-Bu komut repodaki küçük başlatıcıyı ([start.ps1](start.ps1)) indirip çalıştırır. Başlatıcı da `AltDetectorX.ps1` ve `AltDetectorX.bat` dosyalarını `%TEMP%\AltDetectorX` klasörüne indirip `.bat`'ı yeni bir pencerede açar. Başlatıcının içeriği kısadır, çalıştırmadan önce okuyabilirsiniz.
+Bu komut repodaki küçük başlatıcıyı ([start.ps1](start.ps1)) indirip çalıştırır. Başlatıcı da `AltDetectorX.ps1` ve `AltDetectorX.bat` dosyalarını `%TEMP%\AltDetectorX` klasörüne indirip `.bat`'ı aynı terminalde çalıştırır. Başlatıcının içeriği kısadır, çalıştırmadan önce okuyabilirsiniz.
+
+> Yönetici izni: Windows, normal bir terminale sonradan yönetici yetkisi veremez; bu yüzden izin istendiğinde tarama ayrı bir yönetici penceresinde açılır. Her şeyin aynı pencerede çalışması için terminali **"Yönetici olarak çalıştır"** ile açın ya da Windows 11'de **Ayarlar › Sistem › Geliştiriciler için › sudo'yu etkinleştir** (satır içi mod) seçeneğini açın.
 
 - Her zaman en güncel sürüm iner: başlatıcı önce GitHub'dan son commit'i sorar ve dosyaları o commit'ten indirir, böylece GitHub'ın 5 dakikalık önbelleğine takılmaz. (GitHub'a ulaşılamazsa normal adresten indirir.)
 - Bağlantı yavaşsa ya da takılırsa her dosya için en fazla 60 saniye beklenir ve 3 kez yeniden denenir; komut asla sonsuza kadar donmaz.

@@ -2,7 +2,7 @@
 # README'deki kisa komut bu dosyayi indirip calistirir. Yaptigi is:
 #   1. GitHub'dan son commit'i sorar (GitHub'in 5 dakikalik onbellegine takilmamak icin)
 #   2. AltDetectorX.ps1 ve AltDetectorX.bat dosyalarini o commit'ten %TEMP%\AltDetectorX klasorune indirir
-#   3. AltDetectorX.bat'i yeni bir pencerede baslatir
+#   3. AltDetectorX.bat'i ayni terminalde calistirir
 # Internete veri gondermez; sadece bu repodaki iki dosyayi indirir.
 
 $repo = 'Extez61/AltDetectorX'
@@ -37,5 +37,6 @@ foreach ($name in 'AltDetectorX.ps1', 'AltDetectorX.bat') {
     }
 }
 
-$bat = Join-Path $dir 'AltDetectorX.bat'
-if ($args.Count -gt 0) { Start-Process -FilePath $bat -ArgumentList ($args -join ' ') } else { Start-Process -FilePath $bat }
+# Yeni pencere acmadan, ayni terminalde calistir
+& (Join-Path $dir 'AltDetectorX.bat') @args
+exit $LASTEXITCODE
