@@ -1934,66 +1934,7 @@ function Get-PanelLines {
     return , $L
 }
 
-# Menüde fare desteği: Windows konsolunun fare olaylarını okumak için küçük bir yardımcı.
-# Yalnızca konsol girdi kipini değiştirir (fare girdisi açık, QuickEdit seçimi kapalı) ve
-# menüden çıkınca eski kipi geri yükler. Yüklenemezse menü klavyeyle çalışmaya devam eder.
-$script:MouseSrc = @'
-using System;
-using System.Runtime.InteropServices;
-public static class AdxConsole {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct KEY_EVENT_RECORD { public int bKeyDown; public ushort wRepeatCount; public ushort wVirtualKeyCode; public ushort wVirtualScanCode; public ushort UnicodeChar; public uint dwControlKeyState; }
-    [StructLayout(LayoutKind.Sequential)]
-    public struct MOUSE_EVENT_RECORD { public short X; public short Y; public uint dwButtonState; public uint dwControlKeyState; public uint dwEventFlags; }
-    [StructLayout(LayoutKind.Explicit)]
-    public struct INPUT_RECORD { [FieldOffset(0)] public ushort EventType; [FieldOffset(4)] public KEY_EVENT_RECORD Key; [FieldOffset(4)] public MOUSE_EVENT_RECORD Mouse; }
-    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr GetStdHandle(int n);
-    [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetConsoleMode(IntPtr h, out uint m);
-    [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetConsoleMode(IntPtr h, uint m);
-    [DllImport("kernel32.dll", SetLastError = true)] static extern bool ReadConsoleInputW(IntPtr h, [Out] INPUT_RECORD[] buf, uint len, out uint read);
-    static IntPtr hIn = GetStdHandle(-10);
-    static uint orig;
-    static bool saved;
-    public static bool Enable() {
-        uint m;
-        if (!GetConsoleMode(hIn, out m)) return false;
-        orig = m; saved = true;
-        // + ENABLE_MOUSE_INPUT (0x10) + ENABLE_EXTENDED_FLAGS (0x80), - QUICK_EDIT (0x40), - VT_INPUT (0x200)
-        return SetConsoleMode(hIn, (m | 0x10u | 0x80u) & ~0x40u & ~0x200u);
-    }
-    public static void Restore() { if (saved) { SetConsoleMode(hIn, orig); saved = false; } }
-    // Dönüş: -1 hata, 0 yok sayılacak olay, 1 tuşa basıldı, 2 fare olayı
-    public static int Read(out int vk, out int x, out int y, out uint buttons, out uint flags) {
-        vk = 0; x = 0; y = 0; buttons = 0; flags = 0;
-        INPUT_RECORD[] r = new INPUT_RECORD[1]; uint n;
-        if (!ReadConsoleInputW(hIn, r, 1, out n) || n == 0) return -1;
-        if (r[0].EventType == 1) { if (r[0].Key.bKeyDown != 0) { vk = r[0].Key.wVirtualKeyCode; return 1; } return 0; }
-        if (r[0].EventType == 2) { x = r[0].Mouse.X; y = r[0].Mouse.Y; buttons = r[0].Mouse.dwButtonState; flags = r[0].Mouse.dwEventFlags; return 2; }
-        return 0;
-    }
-}
-'@
-
-function Enable-MenuMouse {
-    $script:MouseOk = $false
-    if (-not $script:Tui) { return }
-    try {
-        if (-not ('AdxConsole' -as [type])) { Microsoft.PowerShell.Utility\Add-Type -TypeDefinition $script:MouseSrc -ErrorAction Stop }
-        $script:MouseOk = [bool][AdxConsole]::Enable()
-    } catch { $script:MouseOk = $false }
-}
-
-function Disable-MenuMouse {
-    try { if ('AdxConsole' -as [type]) { [AdxConsole]::Restore() } } catch { }
-    $script:MouseOk = $false
-}
-
 function Show-Menu {
-    Enable-MenuMouse
-    try { return (Show-MenuLoop) } finally { Disable-MenuMouse }
-}
-
-function Show-MenuLoop {
     $items = @(
         @{ Type = 'scan'; Mode = 'Quick'; Label = 'Hızlı Tarama' },
         @{ Type = 'scan'; Mode = 'Normal'; Label = 'Normal Tarama' },
@@ -2012,7 +1953,6 @@ function Show-MenuLoop {
     $arrow = [string][char]0x25BA
     $script:MenuInit = $false
     $prevRows = 0
-    $top = 0
     while ($true) {
         try { [Console]::CursorVisible = $false } catch { }
         $m = $script:MarginText
@@ -2027,11 +1967,9 @@ function Show-MenuLoop {
         }
         $rows.Add(@())
         $rows.Add(@(@{ T = $m + '  ' + ([string][char]0x2500 * [Math]::Min(66, $pw - 4)); F = 'DarkCyan' }))
-        $itemRows = @{}   # satır numarası -> menü öğesi (fare tıklaması için)
         for ($i = 0; $i -lt $items.Count; $i++) {
             $it = $items[$i]
             if ($it.Type -eq 'sep') { $rows.Add(@()); continue }
-            $itemRows[$rows.Count] = $i
             $on = ($i -eq $sel)
             $prefix = '    '; if ($on) { $prefix = "  $arrow " }
             $text = $it.Label
@@ -2042,7 +1980,6 @@ function Show-MenuLoop {
         }
         $rows.Add(@())
         $hint = ("  {0}/{1} - SEÇ     ENTER - ONAYLA     BO{2}LUK - AÇ/KAPAT     1-2-3 - HIZLI SEÇİM     ESC - ÇIKI{2}" -f [char]0x2191, [char]0x2193, [char]0x015E)
-        if ($script:MouseOk) { $hint += '     FARE - TIKLA / TEKERLEK' }
         foreach ($ln in (Split-Wrap $hint $pw '  ')) { $rows.Add(@(@{ T = $m + $ln; F = 'DarkGray' })) }
         $rows.Add(@())
         $rows.Add(@(@{ T = $m + (Get-SigPadded $pw); F = 'DarkGray' }))
@@ -2091,28 +2028,8 @@ function Show-MenuLoop {
             }
         }
 
-        $key = $null
-        if ($script:MouseOk -and $useCur) {
-            while ($true) {
-                $vk = 0; $mx = 0; $my = 0; $bt = [uint32]0; $fl = [uint32]0
-                $kind = -1
-                try { $kind = [AdxConsole]::Read([ref]$vk, [ref]$mx, [ref]$my, [ref]$bt, [ref]$fl) } catch { $kind = -1 }
-                if ($kind -lt 0) { Disable-MenuMouse; break }
-                if ($kind -eq 1) { $key = [string][ConsoleKey]$vk; break }
-                if ($kind -ne 2) { continue }
-                $hit = -1
-                if ($itemRows.ContainsKey([int]($my - $top))) { $hit = $itemRows[[int]($my - $top)] }
-                if (($fl -band 4) -ne 0) {
-                    # Fare tekerleği: üst 16 bit pozitifse yukarı
-                    if (((($bt -shr 16) -band 0xFFFF) -band 0x8000) -ne 0) { $key = 'DownArrow' } else { $key = 'UpArrow' }
-                    break
-                }
-                if ($fl -eq 0 -and ($bt -band 1) -ne 0 -and $hit -ge 0) { $sel = $hit; $key = 'Enter'; break }
-                if (($fl -band 1) -ne 0 -and $hit -ge 0 -and $hit -ne $sel) { $sel = $hit; $key = '__redraw'; break }
-            }
-        }
-        if (-not $key) { $k = [Console]::ReadKey($true); $key = [string]$k.Key }
-        if ($key -eq '__redraw') { continue }
+        $k = [Console]::ReadKey($true)
+        $key = [string]$k.Key
         if ($key -in 'UpArrow', 'W') { do { $sel = ($sel - 1 + $items.Count) % $items.Count } while ($items[$sel].Type -eq 'sep'); continue }
         if ($key -in 'DownArrow', 'S', 'Tab') { do { $sel = ($sel + 1) % $items.Count } while ($items[$sel].Type -eq 'sep'); continue }
         if ($key -eq 'Escape') { return $null }
