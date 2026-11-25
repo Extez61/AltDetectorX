@@ -58,7 +58,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\AltDetectorX.ps1
 ## Neleri kontrol eder
 
 - **Loglar:** Minecraft ve launcher loglarındaki hesap adları (`Setting user:`, IAS ile hesap geçişleri, `--username`)
-- **Hesap dosyaları:** launcher hesap dosyaları (Microsoft Launcher, TLauncher, Prism, MultiMC, Lunar, Feather, Modrinth ve diğerleri) ve IAS hesap kayıtları
+- **Hesap dosyaları:** launcher hesap dosyaları ve IAS hesap kayıtları. Desteklenen launcher'lar:
+  - Resmî Minecraft Launcher (normal ve Microsoft Store), TLauncher / Legacy Launcher, SKLauncher
+  - Prism Launcher ve çevrimdışı çatalları: PollyMC, Fjord Launcher, ElyPrism Launcher, Freesm Launcher
+  - MultiMC, UltimMC, PolyMC, ATLauncher, GDLauncher, CurseForge, Modrinth App, FTB App, Technic
+  - HMCL (Hello Minecraft! Launcher), X Minecraft Launcher (XMCL), LiquidLauncher
+  - Lunar Client, Badlion Client, Feather Client, LabyMod, Salwyrr
+- **Oyun içi hesap (alt) yöneticileri:** Meteor Client ve LiquidBounce'un kayıtlı hesapları okunur. Wurst Client ve Keychain modunun şifreli hesap dosyaları bulunursa uyarı verilir.
 - **Silinmiş dosyalar:** çöp kutusu, gölge kopyalar ve USN günlüğü
 - **İz silme belirtileri:** Prefetch'te temizleme araçları, log klasörü ACL/junction oyunları ve log4j ile kapatılmış loglama
 - **Diğer:** açık Java süreçleri, WSL dağıtımları, dual boot Linux bölümleri ve sanal makine diskleri

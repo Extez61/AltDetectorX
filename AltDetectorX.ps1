@@ -344,9 +344,17 @@ $script:LauncherRules = @(
     @('\\\.?tlauncher\\', 'TLauncher'),
     @('\\\.?sklauncher\\', 'SKLauncher'),
     @('\\Packages\\Microsoft\.4297127D64EC6_[^\\]+\\', 'Minecraft Launcher (MS Store)'),
+    @('\\\.hmcl\\|\\\.?hmcl\.json$', 'HMCL'),
+    @('\\PollyMC\\', 'PollyMC'),
+    @('\\FjordLauncher\\', 'Fjord Launcher'),
+    @('\\ElyPrismLauncher\\', 'ElyPrism Launcher'),
+    @('\\FreesmLauncher\\', 'Freesm Launcher'),
+    @('\\UltimMC[^\\]*\\', 'UltimMC'),
+    @('\\xmcl\\', 'X Minecraft Launcher'),
+    @('\\CCBlueX\\LiquidLauncher\\', 'LiquidLauncher'),
     @('\\\.minecraft\\', '.minecraft')
 )
-$script:RelevantPathRx = '(?i)(\\\.minecraft\\|lunarclient|feather|badlion|blclient|labymod|prismlauncher|polymc|multimc|atlauncher|gdlauncher|curseforge|modrinth|ftba|\\ftb app\\|technic|salwyrr|tlauncher|sklauncher|4297127d64ec6|minecraft)'
+$script:RelevantPathRx = '(?i)(\\\.minecraft\\|lunarclient|feather|badlion|blclient|labymod|prismlauncher|polymc|multimc|atlauncher|gdlauncher|curseforge|modrinth|ftba|\\ftb app\\|technic|salwyrr|tlauncher|sklauncher|4297127d64ec6|minecraft|\\\.hmcl\\|\.?hmcl\.json$|pollymc|fjordlauncher|elyprismlauncher|freesmlauncher|ultimmc|\\xmcl\\|liquidlauncher|\\liquidbounce\\|\\meteor-client\\|\\wurst\\)'
 $script:RecycleMap = @{}
 $script:CurrentUser = $env:USERNAME
 
@@ -473,6 +481,8 @@ $script:Found = @{
     Configs    = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
     LogConfigs = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
     Disks      = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
+    MeteorNbt  = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
+    AltStores  = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
 }
 $script:Visited = Microsoft.PowerShell.Utility\New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 $script:DirCount = 0
@@ -488,7 +498,10 @@ foreach ($d in 'node_modules', '.git', '.svn', '.hg', '.gradle', '.m2', '.nuget'
 $script:InterestingExt = Microsoft.PowerShell.Utility\New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 foreach ($e in '.log', '.gz', '.json', '.jar', '.txt', '.xml', '.cfg', '.do_not_send_to_anyone', '.vhdx', '.vhd', '.vdi', '.vmdk', '.qcow2') { [void]$script:InterestingExt.Add($e) }
 
-$script:SwitcherModRx = '(?i)(^ias[-_. ]|in-?game-?account-?switcher|account-?switcher|accountswitcher|reauth|alt-?manager|altmanager|account-?manager)'
+$script:SwitcherModRx = '(?i)(^ias[-_. ]|in-?game-?account-?switcher|account-?switcher|accountswitcher|reauth|alt-?manager|altmanager|account-?manager|^keychain[-_.])'
+# Oyun klasörü içinde hesap/alt yöneticisi tutan istemci ve modların dosyaları (adı uzantıdan bağımsız aranır).
+$script:AltFileNames = Microsoft.PowerShell.Utility\New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+foreach ($n in 'accounts.nbt', 'alts.encrypted_json') { [void]$script:AltFileNames.Add($n) }
 # Aracın kendi rapor dosyası (-Export çıktısı) kendi çıktısını "silinmiş Minecraft dosyası" sanmasın.
 # ÖNEMLİ: yalnızca .txt rapor hariç tutulur. .log / .json / hesap dosyaları ASLA ada göre
 # atlanmaz; yoksa biri gerçek bir logu "AltDetectorX...log" diye yeniden adlandırıp taramadan
@@ -532,11 +545,24 @@ function Register-File([IO.FileInfo]$Fi) {
     if ($lower -eq 'options.txt') { $script:Found.Options.Add($Fi); return }
     if ($lower.EndsWith('.xml') -and $parent -eq 'log_configs') { $script:Found.LogConfigs.Add($Fi); return }
 
-    if ($lower -match '^(instance\.cfg|prismlauncher\.cfg|multimc\.cfg|polymc\.cfg|launcher_profiles.*\.json|settings\.json)$' -and $full -match $script:RelevantPathRx) {
+    # Hile istemcilerinin / modların hesap (alt) yöneticisi dosyaları
+    if ($lower -eq 'accounts.nbt' -and $parent -eq 'meteor-client') { $script:Found.MeteorNbt.Add($Fi); return }
+    if ($lower -eq 'alts.encrypted_json' -and $parent -eq 'wurst') {
+        $script:Found.AltStores.Add([pscustomobject]@{ File = $Fi; Kind = 'Wurst Client' }); return
+    }
+    if ($lower -eq 'account-switcher.json' -and $parent -eq 'config') {
+        $script:Found.AltStores.Add([pscustomobject]@{ File = $Fi; Kind = 'Keychain (hesap değiştirici mod)' }); return
+    }
+
+    if ($lower -match '^(instance\.cfg|prismlauncher\.cfg|multimc\.cfg|polymc\.cfg|pollymc\.cfg|fjordlauncher\.cfg|elyprismlauncher\.cfg|freesmlauncher\.cfg|ultimmc\.cfg|launcher_profiles.*\.json|settings\.json)$' -and $full -match $script:RelevantPathRx) {
         $script:Found.Configs.Add($Fi)
     }
     if ($lower.EndsWith('.json') -and $Fi.Length -lt 8MB -and $full -match $script:RelevantPathRx -and
-        ($lower -match 'account|launcher_profiles|tlauncherprofiles' -or ($lower -eq 'config.json' -and $full -match '(?i)gdlauncher'))) {
+        ($lower -match 'account|launcher_profiles|tlauncherprofiles' -or
+        ($lower -eq 'config.json' -and $full -match '(?i)gdlauncher') -or
+        ($lower -in 'hmcl.json', '.hmcl.json') -or
+        ($lower -eq 'user.json' -and $full -match '(?i)\\xmcl\\') -or
+        ($lower -eq 'options.json' -and $full -match '(?i)\\CCBlueX\\LiquidLauncher\\'))) {
         $script:Found.Accounts.Add($Fi)
     }
 }
@@ -600,7 +626,7 @@ function Invoke-Walk {
                 if ($script:SkipDirs.Contains($name)) { continue }
                 if ($name -eq '_IAS_ACCOUNTS_DO_NOT_SEND_TO_ANYONE') { $script:Found.IasDirs.Add($fi.FullName) }
                 if ($MaxDepth -lt 0 -or $depth -lt $MaxDepth) { $stack.Push(@($fi.FullName, $depth + 1)) }
-            } elseif ($script:InterestingExt.Contains($fi.Extension)) {
+            } elseif ($script:InterestingExt.Contains($fi.Extension) -or $script:AltFileNames.Contains($fi.Name)) {
                 Register-File ([IO.FileInfo]$fi)
             }
         }
@@ -637,7 +663,10 @@ function Get-KnownLauncherRoots([string]$ProfileDir) {
         "$r\ATLauncher", "$r\gdlauncher_next", "$r\gdlauncher_carbon", "$r\GDLauncher", "$r\.technic", "$r\com.modrinth.theseus",
         "$r\ModrinthApp", "$r\.sklauncher", "$r\Salwyrr Launcher", "$r\labymodlauncher", "$r\.ftba", "$l\.ftba",
         "$l\Packages\Microsoft.4297127D64EC6_8wekyb3d8bbwe", "$l\Programs\PrismLauncher", "$l\Programs\MultiMC", "$l\MultiMC",
-        '.lunarclient', '.minecraft', 'curseforge\minecraft', 'Documents\curseforge\minecraft', 'MultiMC', 'Desktop\MultiMC', 'Downloads\MultiMC'
+        '.lunarclient', '.minecraft', 'curseforge\minecraft', 'Documents\curseforge\minecraft', 'MultiMC', 'Desktop\MultiMC', 'Downloads\MultiMC',
+        "$r\.hmcl", "$r\PollyMC", "$r\FjordLauncher", "$r\ElyPrismLauncher", "$r\FreesmLauncher", "$r\xmcl", "$r\CCBlueX\LiquidLauncher",
+        "$l\Programs\PollyMC", "$l\Programs\FjordLauncher", "$l\Programs\ElyPrismLauncher", "$l\Programs\FreesmLauncher",
+        'UltimMC', 'Desktop\UltimMC', 'Downloads\UltimMC'
     )
     foreach ($x in $list) { Microsoft.PowerShell.Management\Join-Path $ProfileDir $x }
 }
@@ -724,7 +753,7 @@ function Read-RecycleInfo([string]$IPath) {
 }
 
 function Invoke-RecycleScan {
-    $interesting = '(?i)(\.minecraft|lunarclient|feather|badlion|blclient|labymod|prismlauncher|polymc|multimc|atlauncher|gdlauncher|curseforge\\minecraft|modrinth|tlauncher|sklauncher|_IAS_ACCOUNTS|\\logs(\\|$)|\.log(\.gz)?$|launcher_accounts|launcher_profiles|accounts\.json|ias\.json)'
+    $interesting = '(?i)(\.minecraft|lunarclient|feather|badlion|blclient|labymod|prismlauncher|polymc|multimc|atlauncher|gdlauncher|curseforge\\minecraft|modrinth|tlauncher|sklauncher|_IAS_ACCOUNTS|\\logs(\\|$)|\.log(\.gz)?$|launcher_accounts|launcher_profiles|accounts\.json|ias\.json|\\\.hmcl\\|\.?hmcl\.json$|pollymc|fjordlauncher|elyprismlauncher|freesmlauncher|ultimmc|\\xmcl\\|liquidlauncher|\\liquidbounce\\|\\meteor-client\\|\\wurst\\|accounts\.nbt$|alts\.encrypted_json$)'
     $count = 0
     foreach ($drv in Get-ScanDrives) {
         $bin = Microsoft.PowerShell.Management\Join-Path $drv.RootDirectory.FullName '$Recycle.Bin'
@@ -835,8 +864,8 @@ function Invoke-UsnScan {
     if (-not [IO.File]::Exists($fsutil)) { return }
     $install = $null
     try { $install = (CimCmdlets\Get-CimInstance Win32_OperatingSystem).InstallDate } catch { }
-    $nameRx = '(?i)^(latest\.log|\d{4}-\d{2}-\d{2}-\d+\.log\.gz|launcher_accounts[^\\]*\.json|launcher_profiles[^\\]*\.json|tlauncherprofiles\.json|accounts\.json|accounts_v1\.do_not_send_to_anyone|ias\.json)$'
-    $strongRx = '(?i)^(launcher_accounts[^\\]*\.json|tlauncherprofiles\.json|accounts_v1\.do_not_send_to_anyone|ias\.json)$'
+    $nameRx = '(?i)^(latest\.log|\d{4}-\d{2}-\d{2}-\d+\.log\.gz|launcher_accounts[^\\]*\.json|launcher_profiles[^\\]*\.json|tlauncherprofiles\.json|accounts\.json|accounts_v1\.do_not_send_to_anyone|ias\.json|user-accounts\.json|\.?hmcl\.json|accounts\.nbt|alts\.encrypted_json)$'
+    $strongRx = '(?i)^(launcher_accounts[^\\]*\.json|tlauncherprofiles\.json|accounts_v1\.do_not_send_to_anyone|ias\.json|user-accounts\.json|accounts\.nbt|alts\.encrypted_json)$'
     $found = @{}
     $resolveCache = @{}
     $resolves = 0
@@ -864,7 +893,7 @@ function Invoke-UsnScan {
         }
 
         Show-Progress -Status "USN günlüğü okunuyor ($letter), birkaç dakika sürebilir..." -Recent "$letter\ (USN günlüğü)" -Force
-        $args2 = "/c `"`"$fsutil`" usn readjournal $letter csv | findstr /i /c:`".log.gz`" /c:`"latest.log`" /c:`"account`" /c:`"launcher_profiles`" /c:`"do_not_send`" /c:`"ias.json`"`""
+        $args2 = "/c `"`"$fsutil`" usn readjournal $letter csv | findstr /i /c:`".log.gz`" /c:`"latest.log`" /c:`"account`" /c:`"launcher_profiles`" /c:`"do_not_send`" /c:`"ias.json`" /c:`"hmcl.json`" /c:`"alts.encrypted`"`""
         $out = Invoke-Native $env:ComSpec $args2 300000 $script:OemEnc
         if (-not $out) { continue }
         Show-Progress -Status "USN kayıtları inceleniyor ($letter)..." -Force
@@ -1173,14 +1202,23 @@ function Invoke-AccountFiles {
             Get-JsonAccountNames $obj '' $names
             $parsed = $true
         } catch { }
-        if (-not $parsed) {
-            foreach ($m in [regex]::Matches($txt, '"(?:displayName|minecraftUsername|name)"\s*:\s*"([A-Za-z0-9_]{2,16})"')) { $names.Add($m.Groups[1].Value) }
+        # JSON okunamadıysa ya da yapısı tanınmadıysa (yalnızca hesap dosyalarında) ad alanlarını doğrudan ara.
+        $isAccountFile = ($fi.Name -match '(?i)account|^\.?hmcl\.json$' -or ($fi.Name -ieq 'user.json' -and $fi.FullName -match '(?i)\\xmcl\\'))
+        if (-not $parsed -or ($names.Count -eq 0 -and $isAccountFile)) {
+            # Önce kullanıcı adına özgü alanlar; genel "name" alanı yalnızca bunlar yoksa kullanılır.
+            $stop = 'accounts', 'account', 'value', 'values', 'name', 'type', 'offline', 'cracked', 'microsoft', 'mojang', 'legacy', 'default', 'profile', 'profiles', 'settings', 'config', 'true', 'false', 'null'
+            foreach ($rx in '"(?:displayName|minecraftUsername|username|playerName)"\s*:\s*"([A-Za-z0-9_]{2,16})"', '"name"\s*:\s*"([A-Za-z0-9_]{2,16})"') {
+                foreach ($m in [regex]::Matches($txt, $rx)) { $v = $m.Groups[1].Value; if ($stop -notcontains $v.ToLowerInvariant()) { $names.Add($v) } }
+                if ($names.Count -gt 0) { break }
+            }
         }
         $hint = @()
         if ($fi.Name -match '(?i)tlauncher') { $hint = @('tlauncher') }
         $info = Get-LauncherInfo $fi.FullName $hint
+        $src = "hesap dosyası ($($fi.Name))"
+        if ($fi.FullName -match '(?i)\\LiquidBounce\\[^\\]+$') { $src = 'LiquidBounce alt yöneticisi' }
         foreach ($n in ($names | Microsoft.PowerShell.Utility\Select-Object -Unique)) {
-            Add-Account $n $info[0] $info[1] "hesap dosyası ($($fi.Name))" $fi.FullName $fi.LastWriteTime
+            Add-Account $n $info[0] $info[1] $src $fi.FullName $fi.LastWriteTime
         }
     }
 }
@@ -1266,6 +1304,57 @@ function Invoke-Ias {
         $info = Get-LauncherInfo $fi.FullName
         $where = $info[0]; if ($info[1]) { $where += " › $($info[1])" }
         Add-Alert 'Orta' 'Hesap değiştirici mod yüklü' "$($fi.Name)  [$where]  (oyun içinden hesap değiştirmeye izin verir)"
+    }
+}
+
+# NBT dosyasındaki TAG_String değerlerini (yalnızca istenen anahtar adları için) okur.
+# Biçim: 0x08, ad uzunluğu (2 bayt, big-endian), ad, değer uzunluğu (2 bayt), değer (UTF-8).
+function Read-NbtStrings([string]$Path, [string[]]$Keys) {
+    $out = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[string]
+    $b = [IO.File]::ReadAllBytes($Path)
+    if ($b.Length -ge 2 -and $b[0] -eq 0x1F -and $b[1] -eq 0x8B) {
+        $ms = Microsoft.PowerShell.Utility\New-Object IO.MemoryStream(, $b)
+        $gz = Microsoft.PowerShell.Utility\New-Object IO.Compression.GZipStream($ms, [IO.Compression.CompressionMode]::Decompress)
+        $plain = Microsoft.PowerShell.Utility\New-Object IO.MemoryStream
+        $gz.CopyTo($plain); $gz.Dispose(); $b = $plain.ToArray()
+    }
+    $keyBytes = @{}
+    foreach ($k in $Keys) { $keyBytes[$k] = [Text.Encoding]::UTF8.GetBytes($k) }
+    for ($i = 0; $i -lt $b.Length - 5; $i++) {
+        if ($b[$i] -ne 8) { continue }
+        $nl = ([int]$b[$i + 1] -shl 8) -bor [int]$b[$i + 2]
+        foreach ($k in $Keys) {
+            $kb = $keyBytes[$k]
+            if ($nl -ne $kb.Length -or $i + 3 + $nl + 2 -gt $b.Length) { continue }
+            $same = $true
+            for ($j = 0; $j -lt $nl; $j++) { if ($b[$i + 3 + $j] -ne $kb[$j]) { $same = $false; break } }
+            if (-not $same) { continue }
+            $p = $i + 3 + $nl
+            $vl = ([int]$b[$p] -shl 8) -bor [int]$b[$p + 1]
+            if ($p + 2 + $vl -le $b.Length) { $out.Add([Text.Encoding]::UTF8.GetString($b, $p + 2, $vl)) }
+        }
+    }
+    return , $out
+}
+
+function Invoke-AltManagers {
+    foreach ($fi in $script:Found.MeteorNbt) {
+        $info = Get-LauncherInfo $fi.FullName
+        $where = $info[0]; if ($info[1]) { $where += " › $($info[1])" }
+        $names = @()
+        try {
+            $raw = Read-NbtStrings $fi.FullName @('username', 'name')
+            $names = @($raw | Microsoft.PowerShell.Core\Where-Object { $_ -match $script:McNameRx } | Microsoft.PowerShell.Utility\Select-Object -Unique)
+        } catch { }
+        foreach ($n in $names) { Add-Account $n $info[0] $info[1] 'Meteor Client alt yöneticisi' $fi.FullName $fi.LastWriteTime }
+        Add-Alert 'Yüksek' 'Hile istemcisi alt yöneticisi: Meteor Client' ("{0}  [{1}]  ({2} hesap adı okundu)" -f $fi.FullName, $where, $names.Count)
+    }
+    foreach ($s in $script:Found.AltStores) {
+        $info = Get-LauncherInfo $s.File.FullName
+        $where = $info[0]; if ($info[1]) { $where += " › $($info[1])" }
+        $lvl = 'Orta'; $title = "Hesap değiştirici kayıtları: $($s.Kind)"
+        if ($s.Kind -like 'Wurst*') { $lvl = 'Yüksek'; $title = "Hile istemcisi alt yöneticisi: $($s.Kind)" }
+        Add-Alert $lvl $title ("{0}  [{1}]  (dosya şifreli, hesap adları okunamıyor; son değişiklik: {2:yyyy-MM-dd HH:mm})" -f $s.File.FullName, $where, $s.File.LastWriteTime)
     }
 }
 
@@ -1457,7 +1546,9 @@ function Get-WslLinuxRoots([string]$Root) {
     $known = '.minecraft', '.lunarclient', '.tlauncher', '.feather', '.technic', '.local\share\PrismLauncher', '.local\share\PolyMC',
     '.local\share\multimc', '.local\share\ATLauncher', '.local\share\ModrinthApp', '.local\share\com.modrinth.theseus',
     '.config\gdlauncher_next', '.var\app\com.mojang.Minecraft', '.var\app\org.prismlauncher.PrismLauncher', '.var\app\org.polymc.PolyMC',
-    '.var\app\com.atlauncher.ATLauncher', '.var\app\com.modrinth.ModrinthApp', 'MultiMC', 'PrismLauncher'
+    '.var\app\com.atlauncher.ATLauncher', '.var\app\com.modrinth.ModrinthApp', 'MultiMC', 'PrismLauncher',
+    '.hmcl', '.local\share\hmcl', '.local\share\PollyMC', '.local\share\FjordLauncher', '.local\share\ElyPrismLauncher',
+    '.local\share\FreesmLauncher', '.config\xmcl', 'UltimMC'
     $out = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
     foreach ($h in $homes) { foreach ($k in $known) { $out.Add(@((Microsoft.PowerShell.Management\Join-Path $h $k), -1)) } }
     switch ($Mode) {
@@ -2015,7 +2106,7 @@ function Write-Report {
                 if ($min.Date -ne $max.Date) { $range = "$($min.ToString('yyyy-MM-dd')) - $($max.ToString('yyyy-MM-dd'))" }
 
                 $color = 'Green'
-                if ($srcParts -match 'IAS') { $color = 'Red' }
+                if ($srcParts -match 'IAS|alt yöneticisi') { $color = 'Red' }
                 elseif ($first.Launcher -match 'Bilinmeyen' -or $first.Detail -match 'Çöp kutusundan|Gölge kopya') { $color = 'Yellow' }
 
                 Out-Line ('    ' + $branch) 'DarkGray' -NoNewline
@@ -2227,6 +2318,7 @@ try {
 
     Set-Phase 7 'Son kontroller'
     Invoke-Ias
+    Invoke-AltManagers
     Test-LogIntegrity
     Invoke-ProcessScan
     Test-LinuxInstall
