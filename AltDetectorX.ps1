@@ -53,8 +53,6 @@ $script:zq3 = 36, 63, 34, 46
 $script:OrigEncoding = $null
 try { $script:OrigEncoding = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
-# Konsolu koyu temaya sabitle: arka plan siyah, normal yazı açık gri (beyaza yakın).
-# Vurgu renkleri (başlık mavi/camgöbeği, uyarılar kırmızı/sarı, güvenli yeşil) olduğu gibi kalır.
 $script:OrigBg = $null; $script:OrigFg = $null
 try { $script:OrigBg = [Console]::BackgroundColor; $script:OrigFg = [Console]::ForegroundColor } catch { }
 function Set-DarkBase {
@@ -63,9 +61,6 @@ function Set-DarkBase {
 Set-DarkBase
 try { [Console]::Clear() } catch { }
 
-# Dil desteği: Türkçe metinler script'in içindedir (dosya gerekmez). İngilizce seçilirse metinler
-# lang\en.json dosyasından okunur: önce script'in yanında, sonra %TEMP%\AltDetectorX önbelleğinde
-# aranır; yoksa GitHub'dan bir kez indirilip önbelleğe yazılır. Eksik çeviri Türkçe kalır.
 $script:Lang = 'TR'
 $script:Dict = $null
 $script:LangUrl = 'https://raw.githubusercontent.com/Extez61/AltDetectorX/main/lang/en.json'
@@ -76,7 +71,6 @@ function L([string]$s) {
     if (-not $core) { return $s }
     if ($script:Dict.ContainsKey($core)) { $t = $script:Dict[$core] }
     else {
-        # Küçük harfle başlayan metin için büyük harfli anahtarı dene ("hayır" -> "Hayır" -> "No" -> "no")
         $alt = $core.Substring(0, 1).ToUpper([Globalization.CultureInfo]'tr-TR') + $core.Substring(1)
         if ($alt -ceq $core -or -not $script:Dict.ContainsKey($alt)) { return $s }
         $t = $script:Dict[$alt]
@@ -120,14 +114,12 @@ function Import-Language([string]$Code) {
         }
     }
     if (-not $dict) { return $false }
-    # Yönetici penceresi (ayrı süreç) de aynı dosyayı bulabilsin diye önbelleğe kopyala
     if ($from -ne $cache) { try { [void][IO.Directory]::CreateDirectory($cacheDir); [IO.File]::Copy($from, $cache, $true) } catch { } }
     $script:Dict = $dict
     $script:Lang = 'EN'
     return $true
 }
 
-# Açılışta dil seçimi (EN / TR). Ok tuşları, Enter, E/T ya da 1/2 ile seçilir.
 function Select-Language {
     $opts = @(@('EN', 'English'), @('TR', 'Türkçe'))
     $sel = 0
@@ -169,10 +161,6 @@ function Select-Language {
     }
 }
 
-# Uyarı seviyesini ekranda gösterilecek biçime çevirir (iç değerler Türkçe kalır).
-# Windows kullanıcı adını gizleme (isteğe bağlı, varsayılan kapalı). Açıksa ekrana ve rapora yazılan
-# dosya yollarında "\Users\<ad>\" ve profil klasörü adları "***" olarak gösterilir. Minecraft hesap
-# adları gizlenmez; yalnızca yol parçaları ve "[Windows kullanıcısı: ...]" etiketi maskelenir.
 $script:HideUserOn = $false
 $script:UserMaskRx = $null
 
@@ -410,7 +398,6 @@ function Show-Frame([string]$Activity, [string]$Status, [int]$Percent) {
 
 function Show-Progress {
     param([int]$Id = 1, [string]$Activity, [string]$Status, [int]$Percent = -1, [string]$Recent, [switch]$Force)
-    # Son durum saklanır; uzun süren dış komutlar beklenirken Update-UiTick ekranı bununla yeniden çizer.
     $script:LastActivity = $Activity; $script:LastStatus = $Status; $script:LastPercent = $Percent
     $now = [Environment]::TickCount
     if (-not $Force -and [Math]::Abs($now - $script:LastTick) -lt 100) { return }
@@ -427,8 +414,6 @@ function Show-Progress {
     }
 }
 
-# Ekranı (süre, animasyonlu çubuk) son bilinen durumla yeniler. Uzun süren bekleme döngülerinden çağrılır;
-# Show-Progress kendi içinde 100 ms'de bir çizecek şekilde sınırlandığı için sık çağrılması sorun değildir.
 function Update-UiTick {
     if (-not $script:UiActive) { return }
     $a = $script:LastActivity; $s = $script:LastStatus; $p = $script:LastPercent
@@ -644,19 +629,10 @@ $script:InterestingExt = Microsoft.PowerShell.Utility\New-Object 'System.Collect
 foreach ($e in '.log', '.gz', '.json', '.jar', '.txt', '.xml', '.cfg', '.do_not_send_to_anyone', '.vhdx', '.vhd', '.vdi', '.vmdk', '.qcow2') { [void]$script:InterestingExt.Add($e) }
 
 $script:SwitcherModRx = '(?i)(^ias[-_. ]|in-?game-?account-?switcher|account-?switcher|accountswitcher|reauth|alt-?manager|altmanager|account-?manager|^keychain[-_.])'
-# Oyun klasörü içinde hesap/alt yöneticisi tutan istemci ve modların dosyaları (adı uzantıdan bağımsız aranır).
 $script:AltFileNames = Microsoft.PowerShell.Utility\New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 foreach ($n in 'accounts.nbt', 'alts.encrypted_json') { [void]$script:AltFileNames.Add($n) }
-# Aracın kendi rapor dosyası (-Export çıktısı) kendi çıktısını "silinmiş Minecraft dosyası" sanmasın.
-# ÖNEMLİ: yalnızca .txt rapor hariç tutulur. .log / .json / hesap dosyaları ASLA ada göre
-# atlanmaz; yoksa biri gerçek bir logu "AltDetectorX...log" diye yeniden adlandırıp taramadan
-# kaçabilirdi. Araç zaten yalnızca .txt rapor ve (anında silinen) geçici .ps1 başlatıcı üretir;
-# .txt dosyaları hiçbir yerde hesap/log olarak okunmadığı için bunu hariç tutmak açık yaratmaz.
 $script:SelfFileRx = '(?i)(^|[\\/])AltDetectorX[^\\/]*\.txt$'
 
-# Dosya gerçekten bu aracın ürettiği bir rapor mu? Sadece ad değil, İÇERİK doğrulanır:
-# rapor başlığı ve imza aranır. Böylece biri bir hesap dosyasını "AltDetectorX_x.txt" diye
-# adlandırıp taramadan gizleyemez (gizleme açığı kapalı).
 function Test-IsSelfReport([string]$Path) {
     try {
         if (-not [IO.File]::Exists($Path)) { return $false }
@@ -690,7 +666,6 @@ function Register-File([IO.FileInfo]$Fi) {
     if ($lower -eq 'options.txt') { $script:Found.Options.Add($Fi); return }
     if ($lower.EndsWith('.xml') -and $parent -eq 'log_configs') { $script:Found.LogConfigs.Add($Fi); return }
 
-    # Hile istemcilerinin / modların hesap (alt) yöneticisi dosyaları
     if ($lower -eq 'accounts.nbt' -and $parent -eq 'meteor-client') { $script:Found.MeteorNbt.Add($Fi); return }
     if ($lower -eq 'alts.encrypted_json' -and $parent -eq 'wurst') {
         $script:Found.AltStores.Add([pscustomobject]@{ File = $Fi; Kind = 'Wurst Client' }); return
@@ -720,8 +695,6 @@ function Invoke-Walk {
     while ($stack.Count -gt 0) {
         $e = $stack.Pop()
         $dir = [string]$e[0]; $depth = [int]$e[1]
-        # Bağlantı (junction/symlink) ise gerçek hedefe çevir: aynı klasör hem bağlantı yolundan hem
-        # hedef yolundan taranıp loglar iki kez sayılmasın.
         try {
             $dAttr = [IO.File]::GetAttributes($dir)
             if (($dAttr -band [IO.FileAttributes]::ReparsePoint) -ne 0 -and
@@ -763,7 +736,6 @@ function Invoke-Walk {
                 $name = $fi.Name
                 if (($attr -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
                     if ($name -match '(?i)^(logs|\.minecraft|mods|config|\.lunarclient|_IAS_ACCOUNTS_DO_NOT_SEND_TO_ANYONE|\.hidden)$') {
-                            # Hedef, yığından çıkarılırken çözülür ve uyarı orada verilir (bkz. döngü başı).
                         $stack.Push(@($fi.FullName, $depth + 1))
                     }
                     continue
@@ -914,7 +886,6 @@ function Invoke-RecycleScan {
                 $orig = [string]$info[0]; $when = [datetime]$info[1]
                 if ($orig -notmatch $interesting) { continue }
                 $rPath = Microsoft.PowerShell.Management\Join-Path $sid ('$R' + [IO.Path]::GetFileName($i).Substring(2))
-                # Aracın kendi raporunu atla; ama yalnızca içeriği gerçekten rapor olan .txt'leri (açık kapalı).
                 if ($orig -match $script:SelfFileRx -and (Test-IsSelfReport $rPath)) { continue }
                 $count++
                 $lvl = 'Orta'
@@ -1056,9 +1027,6 @@ function Invoke-UsnScan {
             $isDel = ($reason -band 0x200) -ne 0
             $isRen = ($reason -band 0x1000) -ne 0
             if (-not ($isDel -or $isRen)) { continue }
-            # Reason'dan sonraki sütunlar sabit sıraya göre değil içeriğe göre bulunur (fsutil csv düzeni
-            # Windows sürümüne göre değişebilir): ilk tarih olarak okunan alan zaman damgası, 64/128 bit
-            # hex alanlar sırasıyla File ID ve Parent File ID (öznitelikler 8 haneli olduğu için eşleşmez).
             $ts = $null; $ids = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[string]
             for ($i = $r + 1; $i -lt $f.Count; $i++) {
                 $v = $f[$i]
@@ -1129,7 +1097,6 @@ function Test-WipeTools {
         Add-Alert 'Orta' (L 'Prefetch klasörü boş') ((L '{0}  (yakın zamanda temizlenmiş ya da Prefetch kapatılmış olabilir)') -f ($pf))
         return
     }
-    # 3. alan: $true = temizleme / iz silme aracı, $false = sadece inceleme / sistem aracı (tek başına şüpheli değil)
     $tools = @(
         @('^CCLEANER', 'CCleaner', $true), @('^BLEACHBIT', 'BleachBit', $true), @('^PRIVAZER', 'PrivaZer', $true), @('^ERASER', 'Eraser', $true),
         @('^SDELETE', 'SDelete', $true), @('^WISEDISKCLEANER|^WISECLEANER', 'Wise Disk Cleaner', $true), @('^GLARY|^INTEGRATOR', 'Glary Utilities', $true),
@@ -1347,10 +1314,8 @@ function Invoke-AccountFiles {
             Get-JsonAccountNames $obj '' $names
             $parsed = $true
         } catch { }
-        # JSON okunamadıysa ya da yapısı tanınmadıysa (yalnızca hesap dosyalarında) ad alanlarını doğrudan ara.
         $isAccountFile = ($fi.Name -match '(?i)account|^\.?hmcl\.json$' -or ($fi.Name -ieq 'user.json' -and $fi.FullName -match '(?i)\\xmcl\\'))
         if (-not $parsed -or ($names.Count -eq 0 -and $isAccountFile)) {
-            # Önce kullanıcı adına özgü alanlar; genel "name" alanı yalnızca bunlar yoksa kullanılır.
             $stop = 'accounts', 'account', 'value', 'values', 'name', 'type', 'offline', 'cracked', 'microsoft', 'mojang', 'legacy', 'default', 'profile', 'profiles', 'settings', 'config', 'true', 'false', 'null'
             foreach ($rx in '"(?:displayName|minecraftUsername|username|playerName)"\s*:\s*"([A-Za-z0-9_]{2,16})"', '"name"\s*:\s*"([A-Za-z0-9_]{2,16})"') {
                 foreach ($m in [regex]::Matches($txt, $rx)) { $v = $m.Groups[1].Value; if ($stop -notcontains $v.ToLowerInvariant()) { $names.Add($v) } }
@@ -1360,7 +1325,6 @@ function Invoke-AccountFiles {
         $hint = @()
         if ($fi.Name -match '(?i)tlauncher') { $hint = @('tlauncher') }
         $info = Get-LauncherInfo $fi.FullName $hint
-        # Kaynak etiketleri dahili (Türkçe) tutulur; ekranda Get-ShortSource çevirir.
         $src = "hesap dosyası ($($fi.Name))"
         if ($fi.FullName -match '(?i)\\LiquidBounce\\[^\\]+$') { $src = 'LiquidBounce alt yöneticisi' }
         foreach ($n in ($names | Microsoft.PowerShell.Utility\Select-Object -Unique)) {
@@ -1453,8 +1417,6 @@ function Invoke-Ias {
     }
 }
 
-# NBT dosyasındaki TAG_String değerlerini (yalnızca istenen anahtar adları için) okur.
-# Biçim: 0x08, ad uzunluğu (2 bayt, big-endian), ad, değer uzunluğu (2 bayt), değer (UTF-8).
 function Read-NbtStrings([string]$Path, [string[]]$Keys) {
     $out = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[string]
     $b = [IO.File]::ReadAllBytes($Path)
@@ -1630,8 +1592,6 @@ function Invoke-Native {
         $proc = [Diagnostics.Process]::Start($psi)
         $task = $proc.StandardOutput.ReadToEndAsync()
         [void]$proc.StandardError.ReadToEndAsync()
-        # Tek seferde beklemek yerine 100 ms'lik adımlarla bekle ve arada ekranı yenile; yoksa uzun komutlarda
-        # (ör. USN günlüğü okuma, dakikalar sürebilir) arayüz donar ve süre sayacı durur.
         $sw = [Diagnostics.Stopwatch]::StartNew()
         $exited = $false
         while ($true) {
@@ -1640,7 +1600,6 @@ function Invoke-Native {
             Update-UiTick
         }
         if (-not $exited) {
-            # Süreç ağacının tamamını kapat: $Exe cmd.exe ise alt süreçler (fsutil, findstr) yoksa çalışmaya devam eder.
             try {
                 $tk = Microsoft.PowerShell.Management\Join-Path $env:SystemRoot 'System32\taskkill.exe'
                 $kpsi = Microsoft.PowerShell.Utility\New-Object Diagnostics.ProcessStartInfo
@@ -2093,18 +2052,15 @@ function Show-Menu {
         @{ Type = 'sep' },
         @{ Type = 'exit'; Label = (L 'Çıkış') }
     )
-    # Menüde tüm seçenekler varsayılan olarak açık gelir; kullanıcı Boşluk ile kapatabilir.
-    # Kullanıcı adını gizleme ise varsayılan olarak kapalıdır.
     $opts = @{ Paths = $true; Wsl = $true; Export = $true; HideUser = [bool]$HideUser }
     $sel = 1
     $panel = Get-PanelLines
     $arrow = [string][char]0x25BA
     $m = $script:MarginText
-    $itemRow = @{}     # menü öğesi -> ekrandaki satır
+    $itemRow = @{}
     $lastW = -1; $lastH = -1
     $fullW = 80
 
-    # Tek bir satırı (renkli parçalar) doğrudan konsola yazar; Write-Host'tan çok daha hızlıdır.
     function Write-MenuRow([int]$Row, $Parts) {
         try {
             [Console]::SetCursorPosition(0, $Row)
@@ -2133,17 +2089,14 @@ function Show-Menu {
         return @(@{ T = $m + $prefix; F = 'Cyan' }, @{ T = $lbl; F = 'White' })
     }
 
-    # Tüm menüyü bir kez çizer (ilk açılışta ve pencere boyutu değişince).
     function Show-FullMenu {
         try { [Console]::BackgroundColor = [ConsoleColor]::Black; [Console]::Clear() } catch { }
         $pw = Get-OutWidth
-        # Sistem paneli satırları
         $panelRows = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
         foreach ($l in $panel) {
             if (-not $l[0]) { $panelRows.Add(@()); continue }
             foreach ($ln in (Split-Wrap ([string]$l[0]) $pw (' ' * 17))) { $panelRows.Add(@(@{ T = $m + $ln; F = $l[1] })) }
         }
-        # Menü kısmı (öğe satırları -1 dışındaki indeksle işaretli)
         $tail = Microsoft.PowerShell.Utility\New-Object System.Collections.Generic.List[object]
         $tail.Add(@{ P = @(); I = -1 })
         $tail.Add(@{ P = @(@{ T = $m + '  ' + ([string][char]0x2500 * [Math]::Min(66, $pw - 4)); F = 'DarkCyan' }); I = -1 })
@@ -2157,7 +2110,6 @@ function Show-Menu {
         $tail.Add(@{ P = @(); I = -1 })
         $tail.Add(@{ P = @(@{ T = $m + (Get-SigPadded $pw); F = 'DarkGray' }); I = -1 })
 
-        # Pencere kısaysa menü her zaman görünsün diye sistem panelini kırp (tampon pencereyle aynı boyda olabilir).
         $avail = 25
         try { $avail = [Math]::Min([Console]::WindowHeight, [Console]::BufferHeight - [Console]::WindowTop) - 1 } catch { }
         $keep = $panelRows.Count
@@ -2202,7 +2154,6 @@ function Show-Menu {
             }
             if ($pick) { return [pscustomobject]@{ Mode = $pick; Paths = $opts.Paths; Wsl = $opts.Wsl; Export = $opts.Export; HideUser = $opts.HideUser } }
         }
-        # Yalnızca değişen satırları yeniden çiz
         if ($itemRow.ContainsKey($old)) { Write-MenuRow $itemRow[$old] (Get-ItemParts $old) }
         if ($sel -ne $old -and $itemRow.ContainsKey($sel)) { Write-MenuRow $itemRow[$sel] (Get-ItemParts $sel) }
         try { [Console]::SetCursorPosition(0, [Console]::WindowTop) } catch { }
@@ -2270,7 +2221,6 @@ function Write-Report {
                 if ($min.Date -ne $max.Date) { $range = "$($min.ToString('yyyy-MM-dd')) - $($max.ToString('yyyy-MM-dd'))" }
 
                 $color = 'Green'
-                # Renk kararları dile bağlı olmasın: dahili kaynak adlarına ve dosya yoluna bakılır.
                 if (@($lg.Group | Microsoft.PowerShell.Core\Where-Object { $_.Source -match 'IAS|alt yöneticisi' }).Count -gt 0) { $color = 'Red' }
                 elseif ($first.Launcher -eq (L 'Bilinmeyen konum') -or $first.Path -match '\\\$Recycle\.Bin\\' -or (Test-IsShadowPath $first.Path)) { $color = 'Yellow' }
 
@@ -2401,14 +2351,11 @@ function Invoke-Elevation {
     if (-not $exe -or [IO.Path]::GetFileName($exe) -notmatch '(?i)^(powershell|pwsh)\.exe$') {
         $exe = Microsoft.PowerShell.Management\Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     }
-    # Windows 11 sudo "satır içi" (normal) modda açıksa yönetici olarak AYNI terminalde çalış.
-    # (HKLM\...\Sudo: Enabled = 3 -> satır içi; 1 -> yeni pencere; 2 -> girişsiz; 0/yok -> kapalı)
     $sudo = Microsoft.PowerShell.Management\Join-Path $env:SystemRoot 'System32\sudo.exe'
     $sudoMode = $null
     try { $sudoMode = (Microsoft.PowerShell.Management\Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Sudo' -ErrorAction Stop).Enabled } catch { }
     if ([IO.File]::Exists($sudo) -and $sudoMode -eq 3) {
         try { & $sudo $exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc } catch { }
-        # Başlatıcı çalıştıysa geçici dosyayı hemen siler; dosya hâlâ duruyorsa izin verilmemiştir.
         if (-not [IO.File]::Exists($tmp)) { return 'inline' }
         try { [IO.File]::Delete($tmp) } catch { }
         return $false
@@ -2426,7 +2373,6 @@ $script:OrigPriority = $null
 $script:MenuShown = $false
 try {
     Initialize-Runtime
-    # Dil: -Lang verildiyse o; etkileşimli açılışta sor; diğer durumlarda Türkçe.
     $langCode = $Lang
     if (-not $langCode) { if ($script:Tui -and -not $script:ParamGiven) { $langCode = Select-Language } else { $langCode = 'TR' } }
     if (-not (Import-Language $langCode)) {
@@ -2536,7 +2482,6 @@ try {
     }
 } finally {
     Microsoft.PowerShell.Utility\Write-Progress -Id 1 -Activity 'Bitti' -Completed
-    # Konsolun özgün renklerini geri ver (kullanıcının teması bozulmasın).
     try {
         if ($null -ne $script:OrigBg) { [Console]::BackgroundColor = $script:OrigBg }
         if ($null -ne $script:OrigFg) { [Console]::ForegroundColor = $script:OrigFg }
